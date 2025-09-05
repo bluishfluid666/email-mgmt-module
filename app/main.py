@@ -4,8 +4,11 @@ from fastapi.responses import JSONResponse
 from app.api.routes import router
 from app.config import settings
 from app.models import ErrorResponse
+from app.graph_service import GraphService
+from app.dependencies import set_graph_service
 import logging
 import sys
+import asyncio
 
 # Configure logging
 logging.basicConfig(
@@ -35,6 +38,35 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+async def initialize_graph_service():
+    """Initialize and authenticate the Graph service at startup"""
+    logger.info("Initializing Graph service...")
+    service = GraphService(
+        client_id=settings.client_id,
+        tenant_id=settings.tenant_id,
+        scopes=settings.graph_user_scopes
+    )
+    
+    try:
+        # Test authentication by getting user info
+        logger.info("Attempting to authenticate with Microsoft Graph...")
+        user = await service.get_user()
+        if user:
+            logger.info(f"Successfully authenticated as: {user.display_name} ({user.mail or user.user_principal_name})")
+        else:
+            logger.warning("Authentication completed but user info not available")
+    except Exception as e:
+        logger.error(f"Failed to authenticate with Microsoft Graph: {e}")
+        logger.info("Please complete the authentication flow when prompted")
+    
+    # Set the global instance
+    set_graph_service(service)
+
+# Startup event
+@app.on_event("startup")
+async def startup_event():
+    await initialize_graph_service()
 
 # Include API routes
 app.include_router(router, prefix="/api/v1", tags=["Email Management"])

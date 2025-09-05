@@ -5,7 +5,6 @@ from app.models import (
     HealthResponse, TokenResponse, ErrorResponse, EmailMessage, EmailSender, EmailAddress
 )
 from app.graph_service import GraphService
-from app.auth import verify_api_key
 from app.config import settings
 from datetime import datetime
 import logging
@@ -14,13 +13,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Dependency to get GraphService instance
-def get_graph_service() -> GraphService:
-    return GraphService(
-        client_id=settings.client_id,
-        tenant_id=settings.tenant_id,
-        scopes=settings.graph_user_scopes
-    )
+# Import the dependency function
+from app.dependencies import get_graph_service
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check():
