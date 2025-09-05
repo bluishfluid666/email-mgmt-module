@@ -7,7 +7,7 @@ A FastAPI-based REST API for email management using Microsoft Graph API.
 - **User Management**: Get authenticated user information
 - **Email Reading**: List inbox messages with pagination
 - **Email Sending**: Send emails with text or HTML content
-- **Authentication**: API key-based authentication
+- **Authentication**: Automatic Microsoft Graph authentication at startup
 - **Documentation**: Auto-generated OpenAPI/Swagger documentation
 - **Health Checks**: Built-in health monitoring
 - **Docker Support**: Containerized deployment
@@ -41,7 +41,7 @@ Edit `.env` with your configuration:
 CLIENT_ID=your-azure-client-id
 TENANT_ID=your-azure-tenant-id
 GRAPH_USER_SCOPES=User.Read Mail.Read Mail.Send
-API_KEY=your-secure-api-key
+DEBUG=true
 ```
 
 ### 2. Installation
@@ -52,7 +52,9 @@ API_KEY=your-secure-api-key
 pip install -r requirements.txt
 
 # Run the application
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+# OR use the convenience script
+python run.py
 ```
 
 #### Option B: Docker
@@ -61,32 +63,30 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 docker-compose up --build
 ```
 
-### 3. First Run Authentication
+### 3. Authentication
 
-On first run, you'll need to authenticate with Microsoft Graph:
-1. The application will prompt for device code authentication
-2. Visit the provided URL and enter the code
-3. Sign in with your Microsoft account
-4. Grant the requested permissions
+The application automatically handles Microsoft Graph authentication:
+1. **Startup Authentication**: On server startup, the application will authenticate with Microsoft Graph
+2. **Device Code Flow**: You'll be prompted to visit a URL and enter a device code
+3. **Sign In**: Complete the sign-in with your Microsoft account
+4. **Grant Permissions**: Approve the requested permissions
+5. **Ready to Use**: Once authenticated, all API endpoints are ready for use without further authentication
 
 ## Usage Examples
 
 ### Get User Information
 ```bash
-curl -X GET "http://localhost:8000/api/v1/user" \
-  -H "Authorization: Bearer your-api-key"
+curl -X GET "http://localhost:8001/api/v1/user"
 ```
 
 ### List Inbox Messages
 ```bash
-curl -X GET "http://localhost:8000/api/v1/emails/inbox?limit=10" \
-  -H "Authorization: Bearer your-api-key"
+curl -X GET "http://localhost:8001/api/v1/emails/inbox?limit=10"
 ```
 
 ### Send Email
 ```bash
-curl -X POST "http://localhost:8000/api/v1/emails/send" \
-  -H "Authorization: Bearer your-api-key" \
+curl -X POST "http://localhost:8001/api/v1/emails/send" \
   -H "Content-Type: application/json" \
   -d '{
     "recipient": "user@example.com",
@@ -94,6 +94,25 @@ curl -X POST "http://localhost:8000/api/v1/emails/send" \
     "body": "Hello from the API!",
     "body_type": "text"
   }'
+```
+
+**Note**: No authentication headers are required as the service is pre-authenticated at startup.
+
+## Authentication Flow
+
+The application uses a **singleton pattern** for Microsoft Graph authentication:
+
+1. **Startup Authentication**: When the server starts, it initializes a single Graph service instance
+2. **Device Code Authentication**: During startup, you'll see prompts to complete device code authentication
+3. **Global Instance**: The authenticated service is stored globally and reused for all API requests
+4. **No Per-Request Auth**: Subsequent API calls don't require individual authentication
+5. **Session Persistence**: The authentication persists for the lifetime of the server process
+
+### Startup Logs Example:
+```
+INFO - Initializing Graph service...
+INFO - Attempting to authenticate with Microsoft Graph...
+INFO - Successfully authenticated as: John Doe (john.doe@company.com)
 ```
 
 ## Configuration
@@ -105,7 +124,6 @@ curl -X POST "http://localhost:8000/api/v1/emails/send" \
 | `CLIENT_ID` | Azure application client ID | Required |
 | `TENANT_ID` | Azure tenant ID | Required |
 | `GRAPH_USER_SCOPES` | Graph API scopes | `User.Read Mail.Read Mail.Send` |
-| `API_KEY` | API authentication key | Required |
 | `APP_NAME` | Application name | `Email Management API` |
 | `APP_VERSION` | Application version | `1.0.0` |
 | `DEBUG` | Enable debug mode | `false` |
@@ -127,8 +145,9 @@ email-mgmt-module/
 │   ├── main.py              # FastAPI application
 │   ├── config.py            # Configuration management
 │   ├── models.py            # Pydantic models
-│   ├── auth.py              # Authentication
+│   ├── auth.py              # Authentication (optional)
 │   ├── graph_service.py     # Graph API service
+│   ├── dependencies.py     # Dependency injection
 │   └── api/
 │       ├── __init__.py
 │       └── routes.py        # API endpoints
@@ -150,11 +169,12 @@ pytest
 
 ## Security Considerations
 
-1. **API Key**: Use a strong, unique API key in production
+1. **Authentication**: Microsoft Graph authentication is handled at application startup
 2. **HTTPS**: Always use HTTPS in production
 3. **CORS**: Configure CORS appropriately for your frontend domains
 4. **Scopes**: Only request minimum required Graph API scopes
 5. **Secrets**: Never commit secrets to version control
+6. **Access Control**: Consider implementing additional access controls for production use
 
 ## Monitoring
 
