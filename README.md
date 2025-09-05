@@ -66,7 +66,7 @@ docker-compose up --build
 ### 3. Authentication
 
 The application automatically handles Microsoft Graph authentication:
-1. **Startup Authentication**: On server startup, the application will authenticate with Microsoft Graph
+1. **Startup Authentication**: On server startup, the application will authenticate with Microsoft Graph. Look for the line "To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code XXXXXXXXX to authenticate." in the server log.
 2. **Device Code Flow**: You'll be prompted to visit a URL and enter a device code
 3. **Sign In**: Complete the sign-in with your Microsoft account
 4. **Grant Permissions**: Approve the requested permissions
