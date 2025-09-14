@@ -65,15 +65,15 @@ class ConversationMessage(BaseModel):
     is_read: bool = False
     received_date_time: Optional[datetime] = None
     conversation_id: Optional[str] = None
-    message_type: str = "unknown"  # "sent" or "received"
+    message_type: str = "unknown"  # "initial", "reply", or "follow_up"
+    is_from_current_user: bool = False
 
 class Conversation(BaseModel):
     """Conversation model"""
     conversation_id: str
     messages: List[ConversationMessage]
     total_messages: int
-    has_sent_messages: bool
-    has_received_messages: bool
+    last_message_status: str  # "initial", "reply", or "follow_up"
 
 class ConversationsResponse(BaseModel):
     """Response model for conversations"""

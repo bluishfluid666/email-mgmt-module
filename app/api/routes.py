@@ -191,6 +191,12 @@ async def get_conversations(
                 detail="Sent limit must be between 1 and 100"
             )
         
+        # Get current user context for reply detection
+        current_user = await graph_service.get_user()
+        current_user_email = None
+        if current_user:
+            current_user_email = current_user.mail or current_user.user_principal_name
+        
         # Get conversations from graph service
         conversations_dict = await graph_service.get_conversations(
             inbox_top=inbox_limit, 
@@ -210,20 +216,35 @@ async def get_conversations(
         
         for conversation_id, messages in conversations_dict.items():
             conversation_messages = []
-            has_sent_messages = False
-            has_received_messages = False
             
-            for message in messages:
-                # Determine message type (simplified heuristic)
-                # In a real implementation, you'd track this during grouping
-                message_type = "received"  # Default to received
-                if hasattr(message, 'is_read') and message.is_read is None:
-                    message_type = "sent"
+            # Sort messages chronologically to determine message types
+            sorted_messages = sorted(messages, key=lambda msg: getattr(msg, 'received_date_time', None) or getattr(msg, 'sent_date_time', None) or '')
+            
+            # Track conversation flow for message type determination
+            first_user_message_found = False
+            last_message_status = "unknown"
+            
+            for i, message in enumerate(sorted_messages):
+                # Determine if message is from current user
+                is_from_current_user = False
+                if current_user_email and message.from_ and message.from_.email_address:
+                    sender_email = message.from_.email_address.address
+                    if sender_email and sender_email.lower() == current_user_email.lower():
+                        is_from_current_user = True
                 
-                if message_type == "sent":
-                    has_sent_messages = True
+                # Determine message type based on conversation flow
+                message_type = "unknown"
+                if is_from_current_user:
+                    if not first_user_message_found:
+                        message_type = "initial"
+                        first_user_message_found = True
+                    else:
+                        message_type = "follow_up"
                 else:
-                    has_received_messages = True
+                    message_type = "reply"
+                
+                # Update last message status (this will be the final value after the loop)
+                last_message_status = message_type
                 
                 # Extract sender information
                 email_sender = None
@@ -242,7 +263,8 @@ async def get_conversations(
                     is_read=message.is_read or False,
                     received_date_time=message.received_date_time,
                     conversation_id=conversation_id,
-                    message_type=message_type
+                    message_type=message_type,
+                    is_from_current_user=is_from_current_user
                 )
                 conversation_messages.append(conversation_message)
             
@@ -250,8 +272,7 @@ async def get_conversations(
                 conversation_id=conversation_id,
                 messages=conversation_messages,
                 total_messages=len(conversation_messages),
-                has_sent_messages=has_sent_messages,
-                has_received_messages=has_received_messages
+                last_message_status=last_message_status
             )
             conversations.append(conversation)
             total_messages += len(conversation_messages)
