@@ -12,8 +12,9 @@ from msgraph.generated.models.body_type import BodyType
 from msgraph.generated.models.recipient import Recipient
 from msgraph.generated.models.email_address import EmailAddress
 from msgraph.generated.models.o_data_errors.o_data_error import ODataError
-from typing import Optional
+from typing import Optional, Dict, List
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ class GraphService:
         """Get inbox messages"""
         try:
             query_params = MessagesRequestBuilder.MessagesRequestBuilderGetQueryParameters(
-                select=['from', 'isRead', 'receivedDateTime', 'subject', 'body'],
+                select=['from', 'isRead', 'receivedDateTime', 'subject', 'body', 'conversationId', 'internetMessageId'],
                 top=top,
                 orderby=['receivedDateTime DESC']
             )
@@ -83,6 +84,28 @@ class GraphService:
             raise
         except Exception as e:
             logger.error(f"Error getting inbox: {e}")
+            raise
+
+    async def get_sent(self, top: int = 50):
+        """Get sent messages"""
+        try:
+            query_params = MessagesRequestBuilder.MessagesRequestBuilderGetQueryParameters(
+                select=['from', 'isRead', 'receivedDateTime', 'subject', 'body', 'conversationId', 'internetMessageId'],
+                top=top,
+                orderby=['receivedDateTime DESC']
+            )
+            request_config = MessagesRequestBuilder.MessagesRequestBuilderGetRequestConfiguration(
+                query_parameters=query_params
+            )
+
+            messages = await self.user_client.me.mail_folders.by_mail_folder_id('sentitems').messages.get(
+                request_configuration=request_config)
+            return messages
+        except ODataError as e:
+            logger.error(f"OData error getting sent messages: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Error getting sent messages: {e}")
             raise
 
     async def send_mail(self, subject: str, body: str, recipient: str, body_type: str = "text"):
@@ -110,4 +133,127 @@ class GraphService:
             raise
         except Exception as e:
             logger.error(f"Error sending mail: {e}")
+            raise
+
+    async def get_all_messages(self, inbox_top: int = 50, sent_top: int = 50):
+        """Get messages from both inbox and sent folders"""
+        try:
+            # Fetch messages from both folders concurrently
+            inbox_task = self.get_inbox(inbox_top)
+            sent_task = self.get_sent(sent_top)
+            
+            inbox_messages, sent_messages = await asyncio.gather(inbox_task, sent_task)
+            
+            all_messages = []
+            if inbox_messages and inbox_messages.value:
+                all_messages.extend(inbox_messages.value)
+            if sent_messages and sent_messages.value:
+                all_messages.extend(sent_messages.value)
+                
+            return all_messages
+        except Exception as e:
+            logger.error(f"Error getting all messages: {e}")
+            raise
+
+    def group_messages_by_conversation(self, inbox_messages: List, sent_messages: List) -> Dict[str, List]:
+        """
+        Group messages by conversation ID based on sent folder conversation IDs
+        
+        Args:
+            inbox_messages: List of inbox message objects from Microsoft Graph
+            sent_messages: List of sent message objects from Microsoft Graph
+            
+        Returns:
+            Dictionary where keys are conversation IDs from sent messages and values are lists of all related messages
+        """
+        # First, collect all conversation IDs from sent messages
+        sent_conversation_ids = set()
+        for message in sent_messages:
+            conversation_id = self._get_conversation_id(message)
+            sent_conversation_ids.add(conversation_id)
+        
+        # Now find all messages (both inbox and sent) that match these conversation IDs
+        conversations = {}
+        
+        for conversation_id in sent_conversation_ids:
+            conversation_messages = []
+            
+            # Add all sent messages with this conversation ID
+            for message in sent_messages:
+                if self._get_conversation_id(message) == conversation_id:
+                    conversation_messages.append(message)
+            
+            # Add all inbox messages with this conversation ID
+            for message in inbox_messages:
+                if self._get_conversation_id(message) == conversation_id:
+                    conversation_messages.append(message)
+            
+            # Only include conversations that have at least one sent message
+            if conversation_messages:
+                # Sort messages within each conversation by received/sent date
+                conversation_messages.sort(
+                    key=lambda msg: getattr(msg, 'received_date_time', None) or getattr(msg, 'sent_date_time', None) or '',
+                    reverse=False  # Oldest first for conversation flow
+                )
+                
+                conversations[conversation_id] = conversation_messages
+        
+        return conversations
+
+    def _get_conversation_id(self, message) -> str:
+        """
+        Extract conversation ID from a message, with fallbacks
+        
+        Args:
+            message: Message object from Microsoft Graph
+            
+        Returns:
+            Conversation ID string
+        """
+        # Get conversation ID, fallback to internet message ID if conversation ID is not available
+        conversation_id = getattr(message, 'conversation_id', None)
+        if not conversation_id:
+            conversation_id = getattr(message, 'internet_message_id', None)
+        
+        # If still no ID, create a unique ID based on subject and participants
+        if not conversation_id:
+            subject = getattr(message, 'subject', 'No Subject')
+            from_email = ''
+            if hasattr(message, 'from_') and message.from_ and hasattr(message.from_, 'email_address'):
+                from_email = getattr(message.from_.email_address, 'address', '')
+            conversation_id = f"subject_{hash(subject + from_email)}"
+        
+        return conversation_id
+
+    async def get_conversations(self, inbox_top: int = 50, sent_top: int = 50) -> Dict[str, List]:
+        """
+        Get conversations based on conversation IDs from sent folder, including all related messages
+        
+        Args:
+            inbox_top: Maximum number of inbox messages to fetch
+            sent_top: Maximum number of sent messages to fetch
+            
+        Returns:
+            Dictionary where keys are conversation IDs from sent messages and values are lists of all related messages
+        """
+        try:
+            # Get messages from both folders separately
+            inbox_task = self.get_inbox(inbox_top)
+            sent_task = self.get_sent(sent_top)
+            
+            inbox_response, sent_response = await asyncio.gather(inbox_task, sent_task)
+            
+            # Extract message lists
+            inbox_messages = inbox_response.value if inbox_response and inbox_response.value else []
+            sent_messages = sent_response.value if sent_response and sent_response.value else []
+            
+            # Group messages by conversation (only those with messages in both folders)
+            conversations = self.group_messages_by_conversation(inbox_messages, sent_messages)
+            
+            total_messages = len(inbox_messages) + len(sent_messages)
+            logger.info(f"Found {len(conversations)} conversations based on sent folder conversation IDs (from {total_messages} total messages)")
+            return conversations
+            
+        except Exception as e:
+            logger.error(f"Error getting conversations: {e}")
             raise

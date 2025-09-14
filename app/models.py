@@ -57,6 +57,30 @@ class TokenResponse(BaseModel):
     has_valid_token: bool
     scopes: List[str]
 
+class ConversationMessage(BaseModel):
+    """Message within a conversation"""
+    subject: Optional[str] = None
+    body_content: Optional[str] = None
+    from_sender: Optional[EmailSender] = None
+    is_read: bool = False
+    received_date_time: Optional[datetime] = None
+    conversation_id: Optional[str] = None
+    message_type: str = "unknown"  # "sent" or "received"
+
+class Conversation(BaseModel):
+    """Conversation model"""
+    conversation_id: str
+    messages: List[ConversationMessage]
+    total_messages: int
+    has_sent_messages: bool
+    has_received_messages: bool
+
+class ConversationsResponse(BaseModel):
+    """Response model for conversations"""
+    conversations: List[Conversation]
+    total_conversations: int
+    total_messages: int
+
 # Error Models
 class ErrorResponse(BaseModel):
     """Error response model"""
