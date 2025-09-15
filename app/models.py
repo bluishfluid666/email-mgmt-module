@@ -10,6 +10,10 @@ class SendEmailRequest(BaseModel):
     body: str
     body_type: str = "text"  # "text" or "html"
 
+class FilterConversationsRequest(BaseModel):
+    """Request model for filtering conversations"""
+    conversations: List['Conversation']
+
 # Response Models
 class UserResponse(BaseModel):
     """Response model for user information"""

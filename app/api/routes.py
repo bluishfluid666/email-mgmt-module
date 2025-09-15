@@ -1,9 +1,10 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from msgraph.generated.models.o_data_errors.o_data_error import ODataError
+from typing import List
 from app.models import (
     UserResponse, InboxResponse, SendEmailRequest, SendEmailResponse,
     HealthResponse, TokenResponse, ErrorResponse, EmailMessage, EmailSender, EmailAddress,
-    ConversationsResponse, Conversation, ConversationMessage
+    ConversationsResponse, Conversation, ConversationMessage, FilterConversationsRequest
 )
 from app.graph_service import GraphService
 from app.config import settings
@@ -291,6 +292,43 @@ async def get_conversations(
         )
     except Exception as e:
         logger.error(f"Unexpected error getting conversations: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
+
+def filter_conversations_needing_immediate_followup(conversations: List[Conversation]) -> List[Conversation]:
+    """
+    Filter conversations that need immediate follow-up (last message status is 'reply')
+    
+    Args:
+        conversations: List of conversation objects
+        
+    Returns:
+        List of conversations where last_message_status is 'reply'
+    """
+    return [conv for conv in conversations if conv.last_message_status == "reply"]
+
+@router.post("/conversations/filter", response_model=ConversationsResponse)
+async def filter_conversations(
+    filter_request: FilterConversationsRequest
+):
+    """Filter conversations needing immediate follow-up (last message status is 'reply')"""
+    try:
+        # Filter conversations that need follow-up
+        filtered_conversations = filter_conversations_needing_immediate_followup(filter_request.conversations)
+        
+        # Calculate total messages in filtered conversations
+        total_messages = sum(conv.total_messages for conv in filtered_conversations)
+        
+        return ConversationsResponse(
+            conversations=filtered_conversations,
+            total_conversations=len(filtered_conversations),
+            total_messages=total_messages
+        )
+        
+    except Exception as e:
+        logger.error(f"Error filtering conversations: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error"
