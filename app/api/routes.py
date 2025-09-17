@@ -9,7 +9,7 @@ from app.models import (
 )
 from app.graph_service import GraphService
 from app.config import settings
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 
 logger = logging.getLogger(__name__)
@@ -258,9 +258,14 @@ async def get_conversations(
                                 previous_time = previous_message.received_date_time or previous_message.sent_date_time
                                 
                                 if current_time and previous_time:
-                                    time_diff = current_time - previous_time
-                                    if time_diff >= timedelta(days=3):
-                                        is_nudge = True
+                                    # Normalize both datetimes for safe comparison
+                                    normalized_current_time = _normalize_datetime(current_time)
+                                    normalized_previous_time = _normalize_datetime(previous_time)
+                                    
+                                    if normalized_current_time and normalized_previous_time:
+                                        time_diff = normalized_current_time - normalized_previous_time
+                                        if time_diff >= timedelta(days=3):
+                                            is_nudge = True
                         
                         if is_nudge:
                             message_type = "nudge"
@@ -322,6 +327,26 @@ async def get_conversations(
             detail="Internal server error"
         )
 
+def _normalize_datetime(dt: datetime) -> datetime:
+    """
+    Normalize datetime to timezone-aware UTC for safe comparison
+    
+    Args:
+        dt: datetime object (may be naive or aware)
+        
+    Returns:
+        timezone-aware datetime in UTC
+    """
+    if dt is None:
+        return None
+    
+    if dt.tzinfo is None:
+        # Naive datetime - assume UTC
+        return dt.replace(tzinfo=timezone.utc)
+    else:
+        # Aware datetime - convert to UTC
+        return dt.astimezone(timezone.utc)
+
 def filter_conversations_needing_immediate_followup(conversations: List[Conversation]) -> List[Conversation]:
     """
     Filter conversations that need immediate follow-up (last message status is 'reply')
@@ -371,7 +396,8 @@ def filter_conversations_needing_nudging(conversations: List[Conversation]) -> L
         List of conversations where last_message_status is 'initial', 'follow_up', or 'nudge'
         and the last message is within the last 3 months
     """
-    three_months_ago = datetime.now() - timedelta(days=90)
+    # Use timezone-aware datetime for comparison
+    three_months_ago = datetime.now(timezone.utc) - timedelta(days=90)
     
     filtered_conversations = []
     for conv in conversations:
@@ -382,8 +408,14 @@ def filter_conversations_needing_nudging(conversations: List[Conversation]) -> L
                 last_message = conv.messages[-1]  # Messages are sorted chronologically
                 last_message_time = last_message.received_date_time
                 
-                if last_message_time and last_message_time >= three_months_ago:
-                    filtered_conversations.append(conv)
+                if last_message_time:
+                    # Normalize both datetimes for safe comparison
+                    normalized_last_message_time = _normalize_datetime(last_message_time)
+                    normalized_three_months_ago = _normalize_datetime(three_months_ago)
+                    
+                    if normalized_last_message_time and normalized_three_months_ago:
+                        if normalized_last_message_time >= normalized_three_months_ago:
+                            filtered_conversations.append(conv)
     
     return filtered_conversations
 
