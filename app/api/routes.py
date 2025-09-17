@@ -4,7 +4,8 @@ from typing import List
 from app.models import (
     UserResponse, InboxResponse, SendEmailRequest, SendEmailResponse,
     HealthResponse, TokenResponse, ErrorResponse, EmailMessage, EmailSender, EmailAddress,
-    ConversationsResponse, Conversation, ConversationMessage, FilterConversationsRequest
+    ConversationsResponse, Conversation, ConversationMessage, FilterConversationsRequest,
+    FilterNudgingConversationsRequest
 )
 from app.graph_service import GraphService
 from app.config import settings
@@ -353,6 +354,59 @@ async def filter_conversations(
         
     except Exception as e:
         logger.error(f"Error filtering conversations: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
+
+def filter_conversations_needing_nudging(conversations: List[Conversation]) -> List[Conversation]:
+    """
+    Filter conversations that need nudging (last message is initial, follow_up, or nudge)
+    and are within the last 3 months
+    
+    Args:
+        conversations: List of conversation objects
+        
+    Returns:
+        List of conversations where last_message_status is 'initial', 'follow_up', or 'nudge'
+        and the last message is within the last 3 months
+    """
+    three_months_ago = datetime.now() - timedelta(days=90)
+    
+    filtered_conversations = []
+    for conv in conversations:
+        # Check if last message status indicates user sent the last message
+        if conv.last_message_status in ["initial", "follow_up", "nudge"]:
+            # Check if the last message is within the last 3 months
+            if conv.messages:
+                last_message = conv.messages[-1]  # Messages are sorted chronologically
+                last_message_time = last_message.received_date_time
+                
+                if last_message_time and last_message_time >= three_months_ago:
+                    filtered_conversations.append(conv)
+    
+    return filtered_conversations
+
+@router.post("/conversations/needing-nudging", response_model=ConversationsResponse)
+async def filter_conversations_needing_nudging_endpoint(
+    filter_request: FilterNudgingConversationsRequest
+):
+    """Filter conversations that need nudging (last message from user, within 3 months)"""
+    try:
+        # Filter conversations that need nudging
+        filtered_conversations = filter_conversations_needing_nudging(filter_request.conversations)
+        
+        # Calculate total messages in filtered conversations
+        total_messages = sum(conv.total_messages for conv in filtered_conversations)
+        
+        return ConversationsResponse(
+            conversations=filtered_conversations,
+            total_conversations=len(filtered_conversations),
+            total_messages=total_messages
+        )
+        
+    except Exception as e:
+        logger.error(f"Error filtering conversations needing nudging: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error"

@@ -14,6 +14,10 @@ class FilterConversationsRequest(BaseModel):
     """Request model for filtering conversations"""
     conversations: List['Conversation']
 
+class FilterNudgingConversationsRequest(BaseModel):
+    """Request model for filtering conversations that need nudging"""
+    conversations: List['Conversation']
+
 # Response Models
 class UserResponse(BaseModel):
     """Response model for user information"""
