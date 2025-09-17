@@ -8,7 +8,7 @@ from app.models import (
 )
 from app.graph_service import GraphService
 from app.config import settings
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 
 logger = logging.getLogger(__name__)
@@ -240,7 +240,31 @@ async def get_conversations(
                         message_type = "initial"
                         first_user_message_found = True
                     else:
-                        message_type = "follow_up"
+                        # Check if this is a nudge message
+                        is_nudge = False
+                        if i > 0:  # There's a previous message
+                            previous_message = sorted_messages[i - 1]
+                            previous_is_from_user = False
+                            if current_user_email and previous_message.from_ and previous_message.from_.email_address:
+                                prev_sender_email = previous_message.from_.email_address.address
+                                if prev_sender_email and prev_sender_email.lower() == current_user_email.lower():
+                                    previous_is_from_user = True
+                            
+                            # Check if previous message was initial or follow_up from current user
+                            if previous_is_from_user:
+                                # Check time elapsed between messages (3 days)
+                                current_time = message.received_date_time or message.sent_date_time
+                                previous_time = previous_message.received_date_time or previous_message.sent_date_time
+                                
+                                if current_time and previous_time:
+                                    time_diff = current_time - previous_time
+                                    if time_diff >= timedelta(days=3):
+                                        is_nudge = True
+                        
+                        if is_nudge:
+                            message_type = "nudge"
+                        else:
+                            message_type = "follow_up"
                 else:
                     message_type = "reply"
                 

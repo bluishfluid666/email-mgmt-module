@@ -69,7 +69,7 @@ class ConversationMessage(BaseModel):
     is_read: bool = False
     received_date_time: Optional[datetime] = None
     conversation_id: Optional[str] = None
-    message_type: str = "unknown"  # "initial", "reply", or "follow_up"
+    message_type: str = "unknown"  # "initial", "reply", "follow_up", or "nudge"
     is_from_current_user: bool = False
 
 class Conversation(BaseModel):
