@@ -11,9 +11,9 @@ class Settings(BaseSettings):
     debug: bool = False
     
     # Azure/Graph Settings
-    client_id: str = "d5ae8779-b99a-4bbe-b7aa-a12299f08824"
-    tenant_id: str = "077ebd7f-3765-4a11-ba7e-0a10f09e1498"
-    graph_user_scopes: str = "User.Read Mail.Read Mail.Send"
+    client_id: str = os.getenv('CLIENT_ID')
+    tenant_id: str = os.getenv('TENANT_ID')
+    graph_user_scopes: str = os.getenv('GRAPH_USER_SCOPES')
     
     # API Security
     api_key: str = "your-secure-api-key-here"  # In production, use a strong key

@@ -31,12 +31,7 @@ A FastAPI-based REST API for email management using Microsoft Graph API.
 
 ### 1. Environment Setup
 
-Copy the environment template:
-```bash
-cp env.example .env
-```
-
-Edit `.env` with your configuration:
+Create `.env` with your configuration:
 ```env
 CLIENT_ID=your-azure-client-id
 TENANT_ID=your-azure-tenant-id
