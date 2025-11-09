@@ -1,20 +1,19 @@
-from configparser import SectionProxy
+import asyncio
+import logging
+from typing import Optional, Dict, List
+
 from azure.identity import DeviceCodeCredential
+from kiota_abstractions.base_request_configuration import RequestConfiguration
 from msgraph import GraphServiceClient
-from msgraph.generated.users.item.user_item_request_builder import UserItemRequestBuilder
+from msgraph.generated.models.body_type import BodyType
+from msgraph.generated.models.email_address import EmailAddress
+from msgraph.generated.models.item_body import ItemBody
+from msgraph.generated.models.message import Message
+from msgraph.generated.models.o_data_errors.o_data_error import ODataError
+from msgraph.generated.models.recipient import Recipient
 from msgraph.generated.users.item.mail_folders.item.messages.messages_request_builder import (
     MessagesRequestBuilder)
-from msgraph.generated.users.item.send_mail.send_mail_post_request_body import (
-    SendMailPostRequestBody)
-from msgraph.generated.models.message import Message
-from msgraph.generated.models.item_body import ItemBody
-from msgraph.generated.models.body_type import BodyType
-from msgraph.generated.models.recipient import Recipient
-from msgraph.generated.models.email_address import EmailAddress
-from msgraph.generated.models.o_data_errors.o_data_error import ODataError
-from typing import Optional, Dict, List
-import logging
-import asyncio
+from msgraph.generated.users.item.user_item_request_builder import UserItemRequestBuilder
 
 logger = logging.getLogger(__name__)
 

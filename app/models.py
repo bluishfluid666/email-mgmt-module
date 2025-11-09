@@ -67,6 +67,7 @@ class TokenResponse(BaseModel):
 
 class ConversationMessage(BaseModel):
     """Message within a conversation"""
+    message_id: str
     subject: Optional[str] = None
     body_content: Optional[str] = None
     from_sender: Optional[EmailSender] = None
