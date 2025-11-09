@@ -17,20 +17,21 @@ from msgraph.generated.users.item.user_item_request_builder import UserItemReque
 
 logger = logging.getLogger(__name__)
 
+
 class GraphService:
     """Enhanced Graph service for API usage"""
-    
+
     def __init__(self, client_id: str, tenant_id: str, scopes: str):
         self.client_id = client_id
         self.tenant_id = tenant_id
         self.graph_scopes = scopes.split(' ')
-        
+
         self.device_code_credential = DeviceCodeCredential(
-            client_id=client_id, 
+            client_id=client_id,
             tenant_id=tenant_id
         )
         self.user_client = GraphServiceClient(
-            self.device_code_credential, 
+            self.device_code_credential,
             self.graph_scopes
         )
 
@@ -181,34 +182,36 @@ class GraphService:
             logger.error(f"Error sending draft: {e}")
             raise
 
+
     async def get_all_messages(self, inbox_top: int = 50, sent_top: int = 50):
         """Get messages from both inbox and sent folders"""
         try:
             # Fetch messages from both folders concurrently
             inbox_task = self.get_inbox(inbox_top)
             sent_task = self.get_sent(sent_top)
-            
+
             inbox_messages, sent_messages = await asyncio.gather(inbox_task, sent_task)
-            
+
             all_messages = []
             if inbox_messages and inbox_messages.value:
                 all_messages.extend(inbox_messages.value)
             if sent_messages and sent_messages.value:
                 all_messages.extend(sent_messages.value)
-                
+
             return all_messages
         except Exception as e:
             logger.error(f"Error getting all messages: {e}")
             raise
 
+
     def group_messages_by_conversation(self, inbox_messages: List, sent_messages: List) -> Dict[str, List]:
         """
         Group messages by conversation ID based on sent folder conversation IDs
-        
+
         Args:
             inbox_messages: List of inbox message objects from Microsoft Graph
             sent_messages: List of sent message objects from Microsoft Graph
-            
+
         Returns:
             Dictionary where keys are conversation IDs from sent messages and values are lists of all related messages
         """
@@ -217,23 +220,23 @@ class GraphService:
         for message in sent_messages:
             conversation_id = self._get_conversation_id(message)
             sent_conversation_ids.add(conversation_id)
-        
+
         # Now find all messages (both inbox and sent) that match these conversation IDs
         conversations = {}
-        
+
         for conversation_id in sent_conversation_ids:
             conversation_messages = []
-            
+
             # Add all sent messages with this conversation ID
             for message in sent_messages:
                 if self._get_conversation_id(message) == conversation_id:
                     conversation_messages.append(message)
-            
+
             # Add all inbox messages with this conversation ID
             for message in inbox_messages:
                 if self._get_conversation_id(message) == conversation_id:
                     conversation_messages.append(message)
-            
+
             # Only include conversations that have at least one sent message
             if conversation_messages:
                 # Sort messages within each conversation by received/sent date
@@ -241,18 +244,19 @@ class GraphService:
                     key=lambda msg: getattr(msg, 'received_date_time', None) or getattr(msg, 'sent_date_time', None) or '',
                     reverse=False  # Oldest first for conversation flow
                 )
-                
+
                 conversations[conversation_id] = conversation_messages
-        
+
         return conversations
+
 
     def _get_conversation_id(self, message) -> str:
         """
         Extract conversation ID from a message, with fallbacks
-        
+
         Args:
             message: Message object from Microsoft Graph
-            
+
         Returns:
             Conversation ID string
         """
@@ -260,7 +264,7 @@ class GraphService:
         conversation_id = getattr(message, 'conversation_id', None)
         if not conversation_id:
             conversation_id = getattr(message, 'internet_message_id', None)
-        
+
         # If still no ID, create a unique ID based on subject and participants
         if not conversation_id:
             subject = getattr(message, 'subject', 'No Subject')
@@ -268,17 +272,18 @@ class GraphService:
             if hasattr(message, 'from_') and message.from_ and hasattr(message.from_, 'email_address'):
                 from_email = getattr(message.from_.email_address, 'address', '')
             conversation_id = f"subject_{hash(subject + from_email)}"
-        
+
         return conversation_id
+
 
     async def get_conversations(self, inbox_top: int = 50, sent_top: int = 50) -> Dict[str, List]:
         """
         Get conversations based on conversation IDs from sent folder, including all related messages
-        
+
         Args:
             inbox_top: Maximum number of inbox messages to fetch
             sent_top: Maximum number of sent messages to fetch
-            
+
         Returns:
             Dictionary where keys are conversation IDs from sent messages and values are lists of all related messages
         """
@@ -286,20 +291,21 @@ class GraphService:
             # Get messages from both folders separately
             inbox_task = self.get_inbox(inbox_top)
             sent_task = self.get_sent(sent_top)
-            
+
             inbox_response, sent_response = await asyncio.gather(inbox_task, sent_task)
-            
+
             # Extract message lists
             inbox_messages = inbox_response.value if inbox_response and inbox_response.value else []
             sent_messages = sent_response.value if sent_response and sent_response.value else []
-            
+
             # Group messages by conversation (only those with messages in both folders)
             conversations = self.group_messages_by_conversation(inbox_messages, sent_messages)
-            
+
             total_messages = len(inbox_messages) + len(sent_messages)
-            logger.info(f"Found {len(conversations)} conversations based on sent folder conversation IDs (from {total_messages} total messages)")
+            logger.info(
+                f"Found {len(conversations)} conversations based on sent folder conversation IDs (from {total_messages} total messages)")
             return conversations
-            
+
         except Exception as e:
             logger.error(f"Error getting conversations: {e}")
             raise
