@@ -123,25 +123,90 @@ async def get_inbox(
             detail="Internal server error"
         )
 
-@router.post("/emails/send", response_model=SendEmailResponse)
-async def send_email(
+@router.post("/emails/draft", response_model=dict)
+async def create_draft_email(
     email_request: SendEmailRequest,
     graph_service: GraphService = Depends(get_graph_service)
 ):
-    """Send an email"""
+    """Create a draft email and return its ID"""
     try:
-        await graph_service.send_mail(
+        draft_id = await graph_service.create_draft(
             subject=email_request.subject,
             body=email_request.body,
             recipient=str(email_request.recipient),
             body_type=email_request.body_type
         )
-        
+
+        return {
+            "success": True,
+            "message": f"Draft created successfully",
+            "draft_id": draft_id
+        }
+
+    except ODataError as e:
+        logger.error(f"Graph API error creating draft: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Graph API error: {e.error.message if e.error else str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error creating draft: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
+
+@router.post("/emails/send/{draft_id}", response_model=SendEmailResponse)
+async def send_draft_email(
+    draft_id: str,
+    graph_service: GraphService = Depends(get_graph_service)
+):
+    """Send a draft email by its ID"""
+    try:
+        await graph_service.send_draft(draft_id)
+
+        return SendEmailResponse(
+            success=True,
+            message=f"Email sent successfully"
+        )
+
+    except ODataError as e:
+        logger.error(f"Graph API error sending draft: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Graph API error: {e.error.message if e.error else str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error sending draft: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
+
+
+@router.post("/emails/send", response_model=SendEmailResponse)
+async def send_email(
+        email_request: SendEmailRequest,
+        graph_service: GraphService = Depends(get_graph_service)
+):
+    """Send an email (convenience method that creates draft and sends immediately)"""
+    try:
+        # Create draft first
+        draft_id = await graph_service.create_draft(
+            subject=email_request.subject,
+            body=email_request.body,
+            recipient=str(email_request.recipient),
+            body_type=email_request.body_type
+        )
+
+        # Then send it
+        await graph_service.send_draft(draft_id)
+
         return SendEmailResponse(
             success=True,
             message=f"Email sent successfully to {email_request.recipient}"
         )
-        
+
     except ODataError as e:
         logger.error(f"Graph API error sending email: {e}")
         raise HTTPException(

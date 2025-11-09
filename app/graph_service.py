@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Optional, Dict, List
+from typing import Optional, List, Dict
 
 from azure.identity import DeviceCodeCredential
 from kiota_abstractions.base_request_configuration import RequestConfiguration
@@ -107,8 +107,20 @@ class GraphService:
             logger.error(f"Error getting sent messages: {e}")
             raise
 
-    async def send_mail(self, subject: str, body: str, recipient: str, body_type: str = "text"):
-        """Send an email message"""
+
+    async def create_draft(self, subject: str, body: str, recipient: str, body_type: str = "text") -> str:
+        """
+        Create a draft email message
+
+        Args:
+        subject: Email subject
+        body: Email body content
+        recipient: Recipient email address
+        body_type: Content type ("text" or "html")
+
+        Returns:
+        Draft message ID (immutable)
+        """
         try:
             message = Message()
             message.subject = subject
@@ -122,16 +134,51 @@ class GraphService:
             to_recipient.email_address.address = recipient
             message.to_recipients = [to_recipient]
 
-            request_body = SendMailPostRequestBody()
-            request_body.message = message
+            # Create draft with ImmutableId preference
+            request_config = RequestConfiguration()
+            request_config.headers.add("Prefer", "IdType=\"ImmutableId\"")
 
-            await self.user_client.me.send_mail.post(body=request_body)
-            return True
+            draft = await self.user_client.me.messages.post(body=message, request_configuration=request_config)
+
+            logger.info(f"Draft created with ID: {draft.id}")
+            return draft.id
         except ODataError as e:
-            logger.error(f"OData error sending mail: {e}")
+            logger.error(f"OData error creating draft: {e}")
             raise
         except Exception as e:
-            logger.error(f"Error sending mail: {e}")
+            logger.error(f"Error creating draft: {e}")
+
+        raise
+
+    async def send_draft(self, draft_id: str) -> bool:
+        """
+        Send a draft email by its ID
+
+        Args:
+        draft_id: The immutable ID of the draft message
+
+        Returns:
+        True if successful
+        """
+
+        try:
+            # Send with ImmutableId preference
+            print('draft id received from network:')
+            print(draft_id)
+            request_config = RequestConfiguration()
+            request_config.headers.add("Prefer", "IdType=\"ImmutableId\"")
+
+            await self.user_client.me.messages.by_message_id(draft_id).send.post(request_configuration=request_config)
+
+            logger.info(f"Draft {draft_id} sent successfully")
+            return True
+
+        except ODataError as e:
+            logger.error(f"OData error sending draft: {e}")
+
+            raise
+        except Exception as e:
+            logger.error(f"Error sending draft: {e}")
             raise
 
     async def get_all_messages(self, inbox_top: int = 50, sent_top: int = 50):
