@@ -108,19 +108,54 @@ class GraphService:
             logger.error(f"Error getting sent messages: {e}")
             raise
 
-
-    async def create_draft(self, subject: str, body: str, recipient: str, body_type: str = "text") -> str:
+    async def create_empty_draft(self) -> str:
         """
-        Create a draft email message
-
-        Args:
-        subject: Email subject
-        body: Email body content
-        recipient: Recipient email address
-        body_type: Content type ("text" or "html")
+        Create an empty draft email message
 
         Returns:
         Draft message ID (immutable)
+        """
+
+
+        try:
+            message = Message()
+            message.subject = ""
+
+            message.body = ItemBody()
+            message.body.content_type = BodyType.Text
+            message.body.content = ""
+
+            # Create draft with ImmutableId preference
+
+            request_config = RequestConfiguration()
+            request_config.headers.add("Prefer", "IdType=\"ImmutableId\"")
+
+            draft = await self.user_client.me.messages.post(body=message, request_configuration=request_config)
+
+            logger.info(f"Empty draft created with ID: {draft.id}")
+
+            return draft.id
+
+        except ODataError as e:
+            logger.error(f"OData error creating empty draft: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Error creating empty draft: {e}")
+            raise
+
+    async def update_draft(self, draft_id: str, subject: str, body: str, recipient: str, body_type: str = "text") -> bool:
+        """
+        Update an existing draft email message with content
+
+        Args:
+            draft_id: The immutable ID of the draft message
+            subject: Email subject
+            body: Email body content
+            recipient: Recipient email address
+            body_type: Content type ("text" or "html")
+
+        Returns:
+            True if successful
         """
         try:
             message = Message()
@@ -135,19 +170,19 @@ class GraphService:
             to_recipient.email_address.address = recipient
             message.to_recipients = [to_recipient]
 
-            # Create draft with ImmutableId preference
+            # Update draft with ImmutableId preference
             request_config = RequestConfiguration()
             request_config.headers.add("Prefer", "IdType=\"ImmutableId\"")
 
-            draft = await self.user_client.me.messages.post(body=message, request_configuration=request_config)
+            await self.user_client.me.messages.by_message_id(draft_id).patch(body=message, request_configuration=request_config)
 
-            logger.info(f"Draft created with ID: {draft.id}")
-            return draft.id
+            logger.info(f"Draft {draft_id} updated successfully")
+            return True
         except ODataError as e:
-            logger.error(f"OData error creating draft: {e}")
+            logger.error(f"OData error updating draft: {e}")
             raise
         except Exception as e:
-            logger.error(f"Error creating draft: {e}")
+            logger.error(f"Error updating draft: {e}")
 
         raise
 

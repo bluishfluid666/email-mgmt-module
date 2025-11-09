@@ -126,23 +126,18 @@ async def get_inbox(
             detail="Internal server error"
         )
 
-@router.post("/emails/draft", response_model=dict)
-async def create_draft_email(
-    email_request: SendEmailRequest,
-    graph_service: GraphService = Depends(get_graph_service)
+
+@router.post("/emails/draft")
+async def create_empty_draft_email(
+        graph_service: GraphService = Depends(get_graph_service)
 ):
-    """Create a draft email and return its ID"""
+    """Create an empty draft email and return its ID"""
     try:
-        draft_id = await graph_service.create_draft(
-            subject=email_request.subject,
-            body=email_request.body,
-            recipient=str(email_request.recipient),
-            body_type=email_request.body_type
-        )
+        draft_id = await graph_service.create_empty_draft()
 
         return {
             "success": True,
-            "message": f"Draft created successfully",
+            "message": "Empty draft created successfully",
             "draft_id": draft_id
         }
 
@@ -159,18 +154,30 @@ async def create_draft_email(
             detail="Internal server error"
         )
 
+
 @router.post("/emails/send/{draft_id}", response_model=SendEmailResponse)
 async def send_draft_email(
-    draft_id: str,
-    graph_service: GraphService = Depends(get_graph_service)
+        draft_id: str,
+        email_request: SendEmailRequest,
+        graph_service: GraphService = Depends(get_graph_service)
 ):
-    """Send a draft email by its ID"""
+    """Update draft with content and send it"""
     try:
+        # Update the draft with content
+        await graph_service.update_draft(
+            draft_id=draft_id,
+            subject=email_request.subject,
+            body=email_request.body,
+            recipient=str(email_request.recipient),
+            body_type=email_request.body_type
+        )
+
+        # Send the draft
         await graph_service.send_draft(draft_id)
 
         return SendEmailResponse(
             success=True,
-            message=f"Email sent successfully"
+            message=f"Email sent successfully to {email_request.recipient}"
         )
 
     except ODataError as e:
