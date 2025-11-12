@@ -1,9 +1,10 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from msgraph.generated.models.o_data_errors.o_data_error import ODataError
-from typing import List
+from typing import List, Optional
 from app.models import (
     UserResponse, InboxResponse, SendEmailRequest, SendEmailResponse,
-    HealthResponse, TokenResponse, ErrorResponse, EmailMessage, EmailSender, EmailAddress,
+    HealthResponse, TokenResponse, ErrorResponse, EmailMessage, EmailAddress,
+    Recipient, ItemBody, FollowupFlag, Attachment,
     ConversationsResponse, Conversation, FilterConversationsRequest,
     FilterNudgingConversationsRequest
 )
@@ -18,6 +19,78 @@ router = APIRouter()
 
 # Import the dependency function
 from app.dependencies import get_graph_service
+
+
+def _convert_graph_recipient(graph_recipient) -> Optional[Recipient]:
+    if not graph_recipient or not getattr(graph_recipient, "email_address", None):
+        return None
+
+    email_address = graph_recipient.email_address
+    return Recipient(
+        email_address=EmailAddress(
+            name=getattr(email_address, "name", None),
+            address=getattr(email_address, "address", None)
+        )
+    )
+
+
+def _convert_graph_recipient_list(graph_recipients) -> Optional[List[Recipient]]:
+    if not graph_recipients:
+        return None
+
+    converted = [
+        recipient for recipient in (
+            _convert_graph_recipient(graph_recipient)
+            for graph_recipient in graph_recipients
+        )
+        if recipient is not None
+    ]
+
+    return converted or None
+
+
+def _convert_graph_item_body(body) -> Optional[ItemBody]:
+    if body is None:
+        return None
+
+    return ItemBody(
+        content_type=getattr(body, "content_type", None),
+        content=getattr(body, "content", None)
+    )
+
+
+def _convert_graph_followup_flag(flag) -> Optional[FollowupFlag]:
+    if flag is None:
+        return None
+
+    return FollowupFlag(
+        status=getattr(flag, "flag_status", None) or getattr(flag, "status", None),
+        completed_date_time=getattr(flag, "completed_date_time", None),
+        due_date_time=getattr(flag, "due_date_time", None),
+        start_date_time=getattr(flag, "start_date_time", None)
+    )
+
+
+def _convert_graph_attachments(attachments) -> Optional[List[Attachment]]:
+    if not attachments:
+        return None
+
+    converted: List[Attachment] = []
+    for attachment in attachments:
+        additional_data = getattr(attachment, "additional_data", {}) or {}
+        converted.append(
+            Attachment(
+                odata_type=getattr(attachment, "odata_type", None) or additional_data.get("@odata.type"),
+                id=getattr(attachment, "id", None),
+                name=getattr(attachment, "name", None),
+                content_type=getattr(attachment, "content_type", None),
+                size=getattr(attachment, "size", None),
+                is_inline=getattr(attachment, "is_inline", None),
+                last_modified_date_time=getattr(attachment, "last_modified_date_time", None)
+            )
+        )
+
+    return converted or None
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -87,23 +160,32 @@ async def get_inbox(
             )
 
         # Convert messages to our response model
-        email_messages = []
+        email_messages: List[EmailMessage] = []
         for message in message_page.value:
-            email_sender = None
-            if message.from_ and message.from_.email_address:
-                email_sender = EmailSender(
-                    email_address=EmailAddress(
-                        name=message.from_.email_address.name,
-                        address=message.from_.email_address.address
-                    )
-                )
-
             email_message = EmailMessage(
-                subject=message.subject,
-                body_content=message.body.content if message.body else None,
-                from_sender=email_sender,
-                is_read=message.is_read or False,
-                received_date_time=message.received_date_time
+                message_id=getattr(message, "id", None),
+                subject=getattr(message, "subject", None),
+                body=_convert_graph_item_body(getattr(message, "body", None)),
+                unique_body=_convert_graph_item_body(getattr(message, "unique_body", None)),
+                from_=_convert_graph_recipient(getattr(message, "from_", None)),
+                sender=_convert_graph_recipient(getattr(message, "sender", None)),
+                to_recipients=_convert_graph_recipient_list(getattr(message, "to_recipients", None)),
+                cc_recipients=_convert_graph_recipient_list(getattr(message, "cc_recipients", None)),
+                bcc_recipients=_convert_graph_recipient_list(getattr(message, "bcc_recipients", None)),
+                reply_to=_convert_graph_recipient_list(getattr(message, "reply_to", None)),
+                is_read=bool(getattr(message, "is_read", False)),
+                is_draft=getattr(message, "is_draft", None),
+                is_delivery_receipt_requested=getattr(message, "is_delivery_receipt_requested", None),
+                is_read_receipt_requested=getattr(message, "is_read_receipt_requested", None),
+                has_attachments=getattr(message, "has_attachments", None),
+                attachments=_convert_graph_attachments(getattr(message, "attachments", None)),
+                conversation_id=getattr(message, "conversation_id", None),
+                importance=getattr(message, "importance", None),
+                created_date_time=getattr(message, "created_date_time", None),
+                last_modified_date_time=getattr(message, "last_modified_date_time", None),
+                received_date_time=getattr(message, "received_date_time", None),
+                sent_date_time=getattr(message, "sent_date_time", None),
+                flag=_convert_graph_followup_flag(getattr(message, "flag", None))
             )
             email_messages.append(email_message)
 
@@ -297,9 +379,12 @@ async def get_conversations(
             conversation_messages = []
 
             # Sort messages chronologically to determine message types
-            rsorted_messages = sorted(messages, key=lambda msg: getattr(msg, 'received_date_time', None) or getattr(msg,
-                                                                                                                    'sent_date_time',
-                                                                                                                    None) or '')
+            sorted_messages = sorted(
+                messages,
+                key=lambda msg: getattr(msg, "received_date_time", None)
+                or getattr(msg, "sent_date_time", None)
+                or ""
+            )
 
             # Track conversation flow for message type determination
             first_user_message_found = False
@@ -356,24 +441,30 @@ async def get_conversations(
                 # Update last message status (this will be the final value after the loop)
                 last_message_status = message_type
 
-                # Extract sender information
-                email_sender = None
-                if message.from_ and message.from_.email_address:
-                    email_sender = EmailSender(
-                        email_address=EmailAddress(
-                            name=message.from_.email_address.name,
-                            address=message.from_.email_address.address
-                        )
-                    )
-
                 conversation_message = EmailMessage(
-                    message_id=message.id,
-                    subject=message.subject,
-                    body_content=message.body.content if message.body else None,
-                    from_sender=email_sender,
-                    is_read=message.is_read or False,
-                    received_date_time=message.received_date_time,
-                    conversation_id=conversation_id,
+                    message_id=getattr(message, "id", None),
+                    subject=getattr(message, "subject", None),
+                    body=_convert_graph_item_body(getattr(message, "body", None)),
+                    unique_body=_convert_graph_item_body(getattr(message, "unique_body", None)),
+                    from_=_convert_graph_recipient(getattr(message, "from_", None)),
+                    sender=_convert_graph_recipient(getattr(message, "sender", None)),
+                    to_recipients=_convert_graph_recipient_list(getattr(message, "to_recipients", None)),
+                    cc_recipients=_convert_graph_recipient_list(getattr(message, "cc_recipients", None)),
+                    bcc_recipients=_convert_graph_recipient_list(getattr(message, "bcc_recipients", None)),
+                    reply_to=_convert_graph_recipient_list(getattr(message, "reply_to", None)),
+                    is_read=bool(getattr(message, "is_read", False)),
+                    is_draft=getattr(message, "is_draft", None),
+                    is_delivery_receipt_requested=getattr(message, "is_delivery_receipt_requested", None),
+                    is_read_receipt_requested=getattr(message, "is_read_receipt_requested", None),
+                    has_attachments=getattr(message, "has_attachments", None),
+                    attachments=_convert_graph_attachments(getattr(message, "attachments", None)),
+                    conversation_id=conversation_id or getattr(message, "conversation_id", None),
+                    importance=getattr(message, "importance", None),
+                    created_date_time=getattr(message, "created_date_time", None),
+                    last_modified_date_time=getattr(message, "last_modified_date_time", None),
+                    received_date_time=getattr(message, "received_date_time", None),
+                    sent_date_time=getattr(message, "sent_date_time", None),
+                    flag=_convert_graph_followup_flag(getattr(message, "flag", None)),
                     message_type=message_type,
                     is_from_current_user=is_from_current_user
                 )
