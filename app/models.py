@@ -35,12 +35,16 @@ class EmailSender(BaseModel):
     email_address: Optional[EmailAddress] = None
 
 class EmailMessage(BaseModel):
-    """Email message model"""
+    """Unified message model for emails and conversations"""
+    message_id: Optional[str] = None
     subject: Optional[str] = None
     body_content: Optional[str] = None
     from_sender: Optional[EmailSender] = None
     is_read: bool = False
     received_date_time: Optional[datetime] = None
+    conversation_id: Optional[str] = None
+    message_type: str = "unknown"  # "initial", "reply", "follow_up", or "nudge"
+    is_from_current_user: bool = False
 
 class InboxResponse(BaseModel):
     """Response model for inbox messages"""
@@ -65,22 +69,10 @@ class TokenResponse(BaseModel):
     has_valid_token: bool
     scopes: List[str]
 
-class ConversationMessage(BaseModel):
-    """Message within a conversation"""
-    message_id: str
-    subject: Optional[str] = None
-    body_content: Optional[str] = None
-    from_sender: Optional[EmailSender] = None
-    is_read: bool = False
-    received_date_time: Optional[datetime] = None
-    conversation_id: Optional[str] = None
-    message_type: str = "unknown"  # "initial", "reply", "follow_up", or "nudge"
-    is_from_current_user: bool = False
-
 class Conversation(BaseModel):
     """Conversation model"""
     conversation_id: str
-    messages: List[ConversationMessage]
+    messages: List[EmailMessage]
     total_messages: int
     last_message_status: str  # "initial", "reply", or "follow_up"
 

@@ -4,7 +4,7 @@ from typing import List
 from app.models import (
     UserResponse, InboxResponse, SendEmailRequest, SendEmailResponse,
     HealthResponse, TokenResponse, ErrorResponse, EmailMessage, EmailSender, EmailAddress,
-    ConversationsResponse, Conversation, ConversationMessage, FilterConversationsRequest,
+    ConversationsResponse, Conversation, FilterConversationsRequest,
     FilterNudgingConversationsRequest
 )
 from app.graph_service import GraphService
@@ -202,7 +202,7 @@ async def send_email(
     """Send an email (convenience method that creates draft and sends immediately)"""
     try:
         # Create draft first
-        draft_id = await graph_service.create_draft(
+        draft_id = await graph_service.create_empty_draft(
             subject=email_request.subject,
             body=email_request.body,
             recipient=str(email_request.recipient),
@@ -366,7 +366,7 @@ async def get_conversations(
                         )
                     )
 
-                conversation_message = ConversationMessage(
+                conversation_message = EmailMessage(
                     message_id=message.id,
                     subject=message.subject,
                     body_content=message.body.content if message.body else None,
