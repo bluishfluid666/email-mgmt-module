@@ -26,7 +26,7 @@ class FilterNudgingConversationsRequest(BaseModel):
 
 from .conversation import Conversation  # noqa: E402  (circular import)
 
-FilterConversationsRequest.update_forward_refs(Conversation=Conversation)
-FilterNudgingConversationsRequest.update_forward_refs(Conversation=Conversation)
+FilterConversationsRequest.model_rebuild()
+FilterNudgingConversationsRequest.model_rebuild()
 
 

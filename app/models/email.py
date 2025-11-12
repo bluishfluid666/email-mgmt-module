@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class EmailAddress(BaseModel):
@@ -16,8 +16,7 @@ class Recipient(BaseModel):
 
     email_address: Optional[EmailAddress] = Field(default=None, alias="emailAddress")
 
-    class Config:
-        allow_population_by_field_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ItemBody(BaseModel):
@@ -26,8 +25,7 @@ class ItemBody(BaseModel):
     content_type: Optional[str] = Field(default=None, alias="contentType")
     content: Optional[str] = None
 
-    class Config:
-        allow_population_by_field_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class FollowupFlag(BaseModel):
@@ -38,8 +36,7 @@ class FollowupFlag(BaseModel):
     due_date_time: Optional[datetime] = Field(default=None, alias="dueDateTime")
     start_date_time: Optional[datetime] = Field(default=None, alias="startDateTime")
 
-    class Config:
-        allow_population_by_field_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class Attachment(BaseModel):
@@ -53,8 +50,7 @@ class Attachment(BaseModel):
     is_inline: Optional[bool] = Field(default=None, alias="isInline")
     last_modified_date_time: Optional[datetime] = Field(default=None, alias="lastModifiedDateTime")
 
-    class Config:
-        allow_population_by_field_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class EmailMessage(BaseModel):
@@ -86,6 +82,5 @@ class EmailMessage(BaseModel):
     message_type: str = "unknown"  # "initial", "reply", "follow_up", or "nudge"
     is_from_current_user: bool = False
 
-    class Config:
-        allow_population_by_field_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
