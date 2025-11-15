@@ -332,24 +332,27 @@ async def get_token_info(
         )
 
 
-@router.get("/conversations", response_model=ConversationsResponse)
+@router.get("/conversations/{folder}", response_model=ConversationsResponse)
 async def get_conversations(
-        inbox_limit: int = 50,
-        sent_limit: int = 50,
+        folder: str,
+        limit: int = 50,
         graph_service: GraphService = Depends(get_graph_service)
 ):
-    """Get conversations grouped by conversation ID from sent folder"""
+    """Get conversations grouped by conversation ID from specified folder (inbox or sent)"""
     try:
-        # Validate limits
-        if inbox_limit < 1 or inbox_limit > 100:
+        # Validate folder name
+        folder_lower = folder.lower()
+        if folder_lower not in ['inbox', 'sent', 'sentitems']:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Inbox limit must be between 1 and 100"
+                detail="Folder must be 'inbox' or 'sent'"
             )
-        if sent_limit < 1 or sent_limit > 100:
+        
+        # Validate limit
+        if limit < 1 or limit > 100:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Sent limit must be between 1 and 100"
+                detail="Limit must be between 1 and 100"
             )
 
         # Get current user context for reply detection
@@ -358,11 +361,18 @@ async def get_conversations(
         if current_user:
             current_user_email = current_user.mail or current_user.user_principal_name
 
-        # Get conversations from graph service
-        conversations_dict = await graph_service.get_conversations(
-            inbox_top=inbox_limit,
-            sent_top=sent_limit
-        )
+        # Get messages from specified folder
+        message_page = await graph_service.get_messages_from_folder(folder_lower, top=limit)
+        
+        if not message_page or not message_page.value:
+            return ConversationsResponse(
+                conversations=[],
+                total_conversations=0,
+                total_messages=0
+            )
+        
+        # Group messages by conversation ID
+        conversations_dict = graph_service.group_messages_by_conversation_single_folder(message_page.value)
 
         if not conversations_dict:
             return ConversationsResponse(

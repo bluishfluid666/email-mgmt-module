@@ -108,6 +108,49 @@ class GraphService:
             logger.error(f"Error getting sent messages: {e}")
             raise
 
+    async def get_messages_from_folder(self, folder_name: str, top: int = 50):
+        """
+        Get messages from a specific folder by folder name
+        
+        Args:
+            folder_name: Name of the folder ('inbox' or 'sent')
+            top: Maximum number of messages to fetch
+            
+        Returns:
+            Messages response from Microsoft Graph
+        """
+        try:
+            # Map folder names to folder IDs
+            folder_id_map = {
+                'inbox': 'inbox',
+                'sent': 'sentitems',
+                'sentitems': 'sentitems'
+            }
+            
+            folder_id = folder_id_map.get(folder_name.lower(), folder_name.lower())
+            
+            query_params = MessagesRequestBuilder.MessagesRequestBuilderGetQueryParameters(
+                select=['from', 'isRead', 'receivedDateTime', 'subject', 'body', 'conversationId', 'internetMessageId', 
+                        'id', 'uniqueBody', 'sender', 'toRecipients', 'ccRecipients', 'bccRecipients', 'replyTo',
+                        'isDraft', 'isDeliveryReceiptRequested', 'isReadReceiptRequested', 'hasAttachments',
+                        'attachments', 'importance', 'createdDateTime', 'lastModifiedDateTime', 'sentDateTime', 'flag'],
+                top=top,
+                orderby=['receivedDateTime DESC']
+            )
+            request_config = MessagesRequestBuilder.MessagesRequestBuilderGetRequestConfiguration(
+                query_parameters=query_params
+            )
+
+            messages = await self.user_client.me.mail_folders.by_mail_folder_id(folder_id).messages.get(
+                request_configuration=request_config)
+            return messages
+        except ODataError as e:
+            logger.error(f"OData error getting messages from folder {folder_name}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Error getting messages from folder {folder_name}: {e}")
+            raise
+
     async def create_empty_draft(self) -> str:
         """
         Create an empty draft email message
@@ -284,6 +327,33 @@ class GraphService:
 
         return conversations
 
+    def group_messages_by_conversation_single_folder(self, messages: List) -> Dict[str, List]:
+        """
+        Group messages from a single folder by conversation ID
+
+        Args:
+            messages: List of message objects from Microsoft Graph
+
+        Returns:
+            Dictionary where keys are conversation IDs and values are lists of messages in that conversation
+        """
+        conversations = {}
+        
+        for message in messages:
+            conversation_id = self._get_conversation_id(message)
+            if conversation_id:
+                if conversation_id not in conversations:
+                    conversations[conversation_id] = []
+                conversations[conversation_id].append(message)
+        
+        # Sort messages within each conversation by received/sent date
+        for conversation_id in conversations:
+            conversations[conversation_id].sort(
+                key=lambda msg: getattr(msg, 'received_date_time', None) or getattr(msg, 'sent_date_time', None) or '',
+                reverse=False  # Oldest first for conversation flow
+            )
+        
+        return conversations
 
     def _get_conversation_id(self, message) -> str:
         """
