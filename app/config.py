@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     tenant_id: str = os.getenv('TENANT_ID')
     graph_user_scopes: str = os.getenv('GRAPH_USER_SCOPES')
     
+    # MongoDB Settings
+    mongodb_connection_string: str = os.getenv('MONGODB_CONNECTION_STRING', '')
+    mongodb_database: str = os.getenv('MONGODB_DATABASE', 'powertrans_analytics')
+    mongodb_collection: str = os.getenv('MONGODB_COLLECTION', 'email_viewers')
+    
     # API Security
     api_key: str = "your-secure-api-key-here"  # In production, use a strong key
     

@@ -19,6 +19,12 @@ from .responses import (
     HealthResponse,
     TokenResponse,
     ConversationsResponse,
+    EmailTrackingResponse,
+    EmailView,
+    BrowserInfo,
+    DeviceInfo,
+    OSInfo,
+    LocationInfo,
 )
 from .errors import ErrorResponse
 
@@ -39,6 +45,12 @@ __all__ = [
     "HealthResponse",
     "TokenResponse",
     "ConversationsResponse",
+    "EmailTrackingResponse",
+    "EmailView",
+    "BrowserInfo",
+    "DeviceInfo",
+    "OSInfo",
+    "LocationInfo",
     "ErrorResponse",
 ]
 

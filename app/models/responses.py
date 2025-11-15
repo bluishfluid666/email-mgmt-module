@@ -53,3 +53,52 @@ class ConversationsResponse(BaseModel):
     total_conversations: int
     total_messages: int
 
+
+# Tracking Models
+class BrowserInfo(BaseModel):
+    """Browser information model"""
+    name: Optional[str] = None
+    version: Optional[str] = None
+
+
+class DeviceInfo(BaseModel):
+    """Device information model"""
+    type: Optional[str] = None
+    name: Optional[str] = None
+
+
+class OSInfo(BaseModel):
+    """Operating system information model"""
+    name: Optional[str] = None
+    version: Optional[str] = None
+
+
+class LocationInfo(BaseModel):
+    """Location information model"""
+    country: Optional[str] = None
+    city: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    isp: Optional[str] = None
+    district: Optional[str] = None
+
+
+class EmailView(BaseModel):
+    """Email view tracking data model"""
+    timestamp: Optional[datetime] = None
+    ip: Optional[str] = None
+    userAgent: Optional[str] = None
+    referrer: Optional[str] = None
+    browser: Optional[BrowserInfo] = None
+    device: Optional[DeviceInfo] = None
+    os: Optional[OSInfo] = None
+    location: Optional[LocationInfo] = None
+
+
+class EmailTrackingResponse(BaseModel):
+    """Response model for email tracking data"""
+    uuid: str
+    createdAt: Optional[datetime] = None
+    views: List[EmailView] = []
+    total_views: int = 0
+

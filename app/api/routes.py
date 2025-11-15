@@ -6,9 +6,10 @@ from app.models import (
     HealthResponse, TokenResponse, ErrorResponse, EmailMessage, EmailAddress,
     Recipient, ItemBody, FollowupFlag, Attachment,
     ConversationsResponse, Conversation, FilterConversationsRequest,
-    FilterNudgingConversationsRequest
+    FilterNudgingConversationsRequest, EmailTrackingResponse
 )
 from app.graph_service import GraphService
+from app.mongodb_service import mongodb_service
 from app.config import settings
 from datetime import datetime, timedelta, timezone
 import logging
@@ -625,6 +626,89 @@ async def filter_conversations_needing_nudging_endpoint(
 
     except Exception as e:
         logger.error(f"Error filtering conversations needing nudging: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
+
+
+@router.get("/messages/{message_id}/tracking", response_model=EmailTrackingResponse)
+async def get_message_tracking(
+        message_id: str
+):
+    """Get email tracking data for a message ID (UUID)"""
+    try:
+        # Get tracking data from MongoDB
+        tracking_data = mongodb_service.get_tracking_data(message_id)
+        
+        if not tracking_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Tracking data for message ID {message_id} not found"
+            )
+        
+        # Convert MongoDB document to response model
+        # Handle views array - convert from MongoDB format
+        views = []
+        if "views" in tracking_data and tracking_data["views"]:
+            for view in tracking_data["views"]:
+                # Convert nested objects
+                browser = None
+                if view.get("browser"):
+                    browser = {
+                        "name": view["browser"].get("name"),
+                        "version": view["browser"].get("version")
+                    }
+                
+                device = None
+                if view.get("device"):
+                    device = {
+                        "type": view["device"].get("type"),
+                        "name": view["device"].get("name")
+                    }
+                
+                os = None
+                if view.get("os"):
+                    os = {
+                        "name": view["os"].get("name"),
+                        "version": view["os"].get("version")
+                    }
+                
+                location = None
+                if view.get("location"):
+                    location = {
+                        "country": view["location"].get("country"),
+                        "city": view["location"].get("city"),
+                        "latitude": view["location"].get("latitude"),
+                        "longitude": view["location"].get("longitude"),
+                        "isp": view["location"].get("isp"),
+                        "district": view["location"].get("district")
+                    }
+                
+                views.append({
+                    "timestamp": view.get("timestamp"),
+                    "ip": view.get("ip"),
+                    "userAgent": view.get("userAgent"),
+                    "referrer": view.get("referrer"),
+                    "browser": browser,
+                    "device": device,
+                    "os": os,
+                    "location": location
+                })
+        
+        response_data = {
+            "uuid": tracking_data.get("uuid"),
+            "createdAt": tracking_data.get("createdAt"),
+            "views": views,
+            "total_views": len(views)
+        }
+        
+        return EmailTrackingResponse(**response_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting tracking data for message {message_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error"
