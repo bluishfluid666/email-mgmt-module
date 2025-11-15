@@ -54,7 +54,7 @@ class MongoDBService:
         Returns:
             Dictionary containing tracking data or None if not found
         """
-        if not self.collection:
+        if self.collection is None:
             logger.error("MongoDB collection not available")
             return None
         
