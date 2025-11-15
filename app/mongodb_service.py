@@ -44,7 +44,7 @@ class MongoDBService:
             logger.error(f"Error initializing MongoDB connection: {e}")
             self.client = None
     
-    async def get_tracking_data(self, message_id: str) -> Optional[Dict[str, Any]]:
+    def get_tracking_data(self, message_id: str) -> Optional[Dict[str, Any]]:
         """
         Get tracking data for a message ID (UUID)
         
