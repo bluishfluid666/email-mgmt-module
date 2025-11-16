@@ -1,11 +1,36 @@
 import logging
 from typing import Optional, Dict, Any
+from datetime import datetime, timezone
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 from pymongo.errors import ConnectionFailure, PyMongoError
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_to_utc(dt) -> Optional[datetime]:
+    """
+    Normalize datetime to UTC timezone (+00:00)
+    
+    Args:
+        dt: datetime object (may be naive or timezone-aware)
+        
+    Returns:
+        timezone-aware datetime in UTC, or None if dt is None
+    """
+    if dt is None:
+        return None
+    
+    if isinstance(dt, datetime):
+        if dt.tzinfo is None:
+            # Naive datetime - assume UTC
+            return dt.replace(tzinfo=timezone.utc)
+        else:
+            # Timezone-aware datetime - convert to UTC
+            return dt.astimezone(timezone.utc)
+    
+    return dt
 
 
 class MongoDBService:
@@ -70,7 +95,7 @@ class MongoDBService:
             result = {
                 "_id": str(document.get("_id", "")),
                 "uuid": document.get("uuid"),
-                "createdAt": document.get("createdAt"),
+                "createdAt": _normalize_to_utc(document.get("createdAt")),
                 "views": []
             }
             
@@ -78,7 +103,7 @@ class MongoDBService:
             views = document.get("views", [])
             for view in views:
                 view_data = {
-                    "timestamp": view.get("timestamp"),
+                    "timestamp": _normalize_to_utc(view.get("timestamp")),
                     "ip": view.get("ip"),
                     "userAgent": view.get("userAgent"),
                     "referrer": view.get("referrer"),
