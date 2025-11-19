@@ -89,13 +89,16 @@ class GraphService:
         """Get sent messages"""
         try:
             query_params = MessagesRequestBuilder.MessagesRequestBuilderGetQueryParameters(
-                select=['from', 'isRead', 'receivedDateTime', 'subject', 'body', 'conversationId', 'internetMessageId'],
+                select=['from', 'isRead', 'receivedDateTime', 'subject', 'body', 'conversationId', 'internetMessageId', 'id'],
                 top=top,
-                orderby=['receivedDateTime DESC']
+                orderby=['sentDateTime DESC']
             )
             request_config = MessagesRequestBuilder.MessagesRequestBuilderGetRequestConfiguration(
                 query_parameters=query_params
             )
+            # Use ImmutableId preference when retrieving
+            request_config.headers = RequestConfiguration().headers
+            request_config.headers.add("Prefer", "IdType=\"ImmutableId\"")
 
             messages = await self.user_client.users.by_user_id('sales@powertrans.vn').mail_folders.by_mail_folder_id('sentitems').messages.get(
                 request_configuration=request_config)
@@ -134,11 +137,14 @@ class GraphService:
                         'isDraft', 'isDeliveryReceiptRequested', 'isReadReceiptRequested', 'hasAttachments',
                         'attachments', 'importance', 'createdDateTime', 'lastModifiedDateTime', 'sentDateTime', 'flag'],
                 top=top,
-                orderby=['receivedDateTime DESC']
+                orderby=['sentDateTime DESC' if folder_id == 'sentitems' else 'receivedDateTime DESC']
             )
             request_config = MessagesRequestBuilder.MessagesRequestBuilderGetRequestConfiguration(
                 query_parameters=query_params
             )
+            # Use ImmutableId preference when retrieving
+            request_config.headers = RequestConfiguration().headers
+            request_config.headers.add("Prefer", "IdType=\"ImmutableId\"")
 
             messages = await self.user_client.users.by_user_id('sales@powertrans.vn').mail_folders.by_mail_folder_id(folder_id).messages.get(
                 request_configuration=request_config)
@@ -270,7 +276,7 @@ class GraphService:
             logger.error(f"Error adding attachments to draft: {e}")
             raise
 
-    async def send_draft(self, draft_id: str) -> bool:
+    async def send_draft(self, draft_id: str) -> Optional[str]:
         """
         Send a draft email by its ID
 
@@ -278,7 +284,7 @@ class GraphService:
         draft_id: The immutable ID of the draft message
 
         Returns:
-        True if successful
+        The immutable ID of the sent message (same as draft_id if using ImmutableId)
         """
 
         try:
@@ -289,7 +295,8 @@ class GraphService:
             await self.user_client.users.by_user_id('sales@powertrans.vn').messages.by_message_id(draft_id).send.post(request_configuration=request_config)
 
             logger.info(f"Draft {draft_id} sent successfully")
-            return True
+            # The sent message should have the same ImmutableId as the draft
+            return draft_id
 
         except ODataError as e:
             logger.error(f"OData error sending draft: {e}")
