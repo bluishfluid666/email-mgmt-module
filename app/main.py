@@ -45,7 +45,7 @@ async def initialize_graph_service():
     service = GraphService(
         client_id=settings.client_id,
         tenant_id=settings.tenant_id,
-        scopes=settings.graph_user_scopes
+        client_secret=settings.client_secret
     )
     
     try:

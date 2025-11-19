@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     # Azure/Graph Settings
     client_id: str = os.getenv('CLIENT_ID')
     tenant_id: str = os.getenv('TENANT_ID')
-    graph_user_scopes: str = os.getenv('GRAPH_USER_SCOPES')
+    client_secret: str = os.getenv('CLIENT_SECRET')
     
     # MongoDB Settings
     mongodb_connection_string: str = os.getenv('MONGODB_CONNECTION_STRING', '')

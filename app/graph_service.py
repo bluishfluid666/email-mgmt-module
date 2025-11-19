@@ -3,7 +3,7 @@ import base64
 import logging
 from typing import Optional, List, Dict
 
-from azure.identity import DeviceCodeCredential
+from azure.identity import ClientSecretCredential
 from kiota_abstractions.base_request_configuration import RequestConfiguration
 from msgraph import GraphServiceClient
 from msgraph.generated.models.body_type import BodyType
@@ -23,18 +23,15 @@ logger = logging.getLogger(__name__)
 class GraphService:
     """Enhanced Graph service for API usage"""
 
-    def __init__(self, client_id: str, tenant_id: str, scopes: str):
+    def __init__(self, client_id: str, tenant_id: str, client_secret: str):
         self.client_id = client_id
         self.tenant_id = tenant_id
-        self.graph_scopes = scopes.split(' ')
+        self.client_secret = client_secret
 
-        self.device_code_credential = DeviceCodeCredential(
-            client_id=client_id,
-            tenant_id=tenant_id
-        )
+        self.client_credential = ClientSecretCredential(tenant_id, client_id, client_secret)
+
         self.user_client = GraphServiceClient(
-            self.device_code_credential,
-            self.graph_scopes
+            self.client_credential,
         )
 
     async def get_user_token(self) -> Optional[str]:
@@ -57,7 +54,7 @@ class GraphService:
                 query_parameters=query_params
             )
 
-            user = await self.user_client.me.get(request_configuration=request_config)
+            user = await self.user_client.users.by_user_id('sales@powertrans.vn').get(request_configuration=request_config)
             return user
         except ODataError as e:
             logger.error(f"OData error getting user: {e}")
@@ -78,7 +75,7 @@ class GraphService:
                 query_parameters=query_params
             )
 
-            messages = await self.user_client.me.mail_folders.by_mail_folder_id('inbox').messages.get(
+            messages = await self.user_client.users.by_user_id('sales@powertrans.vn').mail_folders.by_mail_folder_id('inbox').messages.get(
                 request_configuration=request_config)
             return messages
         except ODataError as e:
@@ -100,7 +97,7 @@ class GraphService:
                 query_parameters=query_params
             )
 
-            messages = await self.user_client.me.mail_folders.by_mail_folder_id('sentitems').messages.get(
+            messages = await self.user_client.users.by_user_id('sales@powertrans.vn').mail_folders.by_mail_folder_id('sentitems').messages.get(
                 request_configuration=request_config)
             return messages
         except ODataError as e:
@@ -143,7 +140,7 @@ class GraphService:
                 query_parameters=query_params
             )
 
-            messages = await self.user_client.me.mail_folders.by_mail_folder_id(folder_id).messages.get(
+            messages = await self.user_client.users.by_user_id('sales@powertrans.vn').mail_folders.by_mail_folder_id(folder_id).messages.get(
                 request_configuration=request_config)
             return messages
         except ODataError as e:
@@ -175,7 +172,7 @@ class GraphService:
             request_config = RequestConfiguration()
             request_config.headers.add("Prefer", "IdType=\"ImmutableId\"")
 
-            draft = await self.user_client.me.messages.post(body=message, request_configuration=request_config)
+            draft = await self.user_client.users.by_user_id('sales@powertrans.vn').messages.post(body=message, request_configuration=request_config)
 
             logger.info(f"Empty draft created with ID: {draft.id}")
 
@@ -219,7 +216,7 @@ class GraphService:
             request_config = RequestConfiguration()
             request_config.headers.add("Prefer", "IdType=\"ImmutableId\"")
 
-            await self.user_client.me.messages.by_message_id(draft_id).patch(body=message, request_configuration=request_config)
+            await self.user_client.users.by_user_id('sales@powertrans.vn').messages.by_message_id(draft_id).patch(body=message, request_configuration=request_config)
 
             logger.info(f"Draft {draft_id} updated successfully")
             return True
@@ -289,7 +286,7 @@ class GraphService:
             request_config = RequestConfiguration()
             request_config.headers.add("Prefer", "IdType=\"ImmutableId\"")
 
-            await self.user_client.me.messages.by_message_id(draft_id).send.post(request_configuration=request_config)
+            await self.user_client.users.by_user_id('sales@powertrans.vn').messages.by_message_id(draft_id).send.post(request_configuration=request_config)
 
             logger.info(f"Draft {draft_id} sent successfully")
             return True
