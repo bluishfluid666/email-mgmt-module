@@ -1,6 +1,7 @@
-from pydantic_settings import BaseSettings
-from typing import List
 import os
+
+from pydantic_settings import BaseSettings
+
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
@@ -19,10 +20,10 @@ class Settings(BaseSettings):
     mongodb_connection_string: str = os.getenv('MONGODB_CONNECTION_STRING', '')
     mongodb_database: str = os.getenv('MONGODB_DATABASE', 'powertrans_analytics')
     mongodb_collection: str = os.getenv('MONGODB_COLLECTION', 'email_viewers')
-    
+
     # API Security
     api_key: str = "your-secure-api-key-here"  # In production, use a strong key
-    
+
     class Config:
         env_file = ".env"
         case_sensitive = False
