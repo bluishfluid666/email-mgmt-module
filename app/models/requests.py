@@ -1,6 +1,16 @@
-from typing import List
+from typing import List, Optional
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
+
+
+class AttachmentRequest(BaseModel):
+    """Request model for email attachment"""
+    name: str
+    content: str  # Base64 encoded file content
+    content_type: str = Field(alias="contentType")  # MIME type (e.g., "application/pdf", "image/png")
+    size: Optional[int] = None  # File size in bytes
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class SendEmailRequest(BaseModel):
@@ -9,7 +19,10 @@ class SendEmailRequest(BaseModel):
     recipient: EmailStr
     subject: str
     body: str
-    body_type: str = "text"  # "text" or "html"
+    body_type: str = Field(default="text", alias="bodyType")  # "text" or "html"
+    attachments: Optional[List[AttachmentRequest]] = None
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class FilterConversationsRequest(BaseModel):

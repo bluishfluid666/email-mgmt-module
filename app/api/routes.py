@@ -255,6 +255,19 @@ async def send_draft_email(
             body_type=email_request.body_type
         )
 
+        # Add attachments if provided
+        if email_request.attachments:
+            attachments_data = [
+                {
+                    "name": att.name,
+                    "content": att.content,
+                    "content_type": att.content_type,
+                    "size": att.size
+                }
+                for att in email_request.attachments
+            ]
+            await graph_service.add_attachments_to_draft(draft_id, attachments_data)
+
         # Send the draft
         await graph_service.send_draft(draft_id)
 
@@ -284,13 +297,30 @@ async def send_email(
 ):
     """Send an email (convenience method that creates draft and sends immediately)"""
     try:
-        # Create draft first
-        draft_id = await graph_service.create_empty_draft(
+        # Create empty draft first
+        draft_id = await graph_service.create_empty_draft()
+        
+        # Update draft with content
+        await graph_service.update_draft(
+            draft_id=draft_id,
             subject=email_request.subject,
             body=email_request.body,
             recipient=str(email_request.recipient),
             body_type=email_request.body_type
         )
+
+        # Add attachments if provided
+        if email_request.attachments:
+            attachments_data = [
+                {
+                    "name": att.name,
+                    "content": att.content,
+                    "content_type": att.content_type,
+                    "size": att.size
+                }
+                for att in email_request.attachments
+            ]
+            await graph_service.add_attachments_to_draft(draft_id, attachments_data)
 
         # Then send it
         await graph_service.send_draft(draft_id)

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import logging
 from typing import Optional, List, Dict
 
@@ -7,6 +8,7 @@ from kiota_abstractions.base_request_configuration import RequestConfiguration
 from msgraph import GraphServiceClient
 from msgraph.generated.models.body_type import BodyType
 from msgraph.generated.models.email_address import EmailAddress
+from msgraph.generated.models.file_attachment import FileAttachment
 from msgraph.generated.models.item_body import ItemBody
 from msgraph.generated.models.message import Message
 from msgraph.generated.models.o_data_errors.o_data_error import ODataError
@@ -229,6 +231,48 @@ class GraphService:
 
         raise
 
+    async def add_attachments_to_draft(self, draft_id: str, attachments: List[Dict[str, str]]) -> bool:
+        """
+        Add attachments to an existing draft email message
+
+        Args:
+            draft_id: The immutable ID of the draft message
+            attachments: List of attachment dictionaries with 'name', 'content' (base64), and 'content_type'
+
+        Returns:
+            True if successful
+        """
+        try:
+            for attachment in attachments:
+                file_attachment = FileAttachment()
+                file_attachment.name = attachment.get("name")
+                file_attachment.content_type = attachment.get("content_type")
+                
+                # Decode base64 content
+                content_bytes = base64.b64decode(attachment.get("content"))
+                file_attachment.content_bytes = content_bytes
+                # Use provided size if available, otherwise calculate from decoded content
+                file_attachment.size = attachment.get("size") or len(content_bytes)
+                file_attachment.is_inline = False
+
+                # Add attachment with ImmutableId preference
+                request_config = RequestConfiguration()
+                request_config.headers.add("Prefer", "IdType=\"ImmutableId\"")
+
+                await self.user_client.users.by_user_id('sales@powertrans.vn').messages.by_message_id(draft_id).attachments.post(
+                    body=file_attachment,
+                    request_configuration=request_config
+                )
+
+            logger.info(f"Added {len(attachments)} attachment(s) to draft {draft_id}")
+            return True
+        except ODataError as e:
+            logger.error(f"OData error adding attachments to draft: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Error adding attachments to draft: {e}")
+            raise
+
     async def send_draft(self, draft_id: str) -> bool:
         """
         Send a draft email by its ID
@@ -242,8 +286,6 @@ class GraphService:
 
         try:
             # Send with ImmutableId preference
-            print('draft id received from network:')
-            print(draft_id)
             request_config = RequestConfiguration()
             request_config.headers.add("Prefer", "IdType=\"ImmutableId\"")
 

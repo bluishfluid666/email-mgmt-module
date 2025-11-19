@@ -1,5 +1,6 @@
 from .requests import (
     SendEmailRequest,
+    AttachmentRequest,
     FilterConversationsRequest,
     FilterNudgingConversationsRequest,
 )
@@ -30,6 +31,7 @@ from .errors import ErrorResponse
 
 __all__ = [
     "SendEmailRequest",
+    "AttachmentRequest",
     "FilterConversationsRequest",
     "FilterNudgingConversationsRequest",
     "EmailAddress",
