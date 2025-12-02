@@ -1,18 +1,21 @@
-from fastapi import APIRouter, HTTPException, Depends, status
-from msgraph.generated.models.o_data_errors.o_data_error import ODataError
+import base64
+import logging
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
+
+from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File
+from msgraph.generated.models.o_data_errors.o_data_error import ODataError
+
+from app.config import settings
+from app.graph_service import GraphService
 from app.models import (
     UserResponse, InboxResponse, SendEmailRequest, SendEmailResponse,
-    HealthResponse, TokenResponse, ErrorResponse, EmailMessage, EmailAddress,
+    HealthResponse, TokenResponse, EmailMessage, EmailAddress,
     Recipient, ItemBody, FollowupFlag, Attachment,
     ConversationsResponse, Conversation, FilterConversationsRequest,
     FilterNudgingConversationsRequest, EmailTrackingResponse
 )
-from app.graph_service import GraphService
 from app.mongodb_service import mongodb_service
-from app.config import settings
-from datetime import datetime, timedelta, timezone
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +106,56 @@ async def health_check():
         version=settings.app_version,
         timestamp=datetime.now()
     )
+
+
+@router.post("/drafts/{draft_id}/attachments")
+async def upload_attachment_to_draft(
+        draft_id: str,
+        file: UploadFile = File(...),
+        graph_service: GraphService = Depends(get_graph_service)
+):
+    """Upload a file attachment directly to a draft message"""
+    try:
+        # Read file content
+        file_content = await file.read()
+        
+        # Get content type
+        content_type = file.content_type or "application/octet-stream"
+        filename = file.filename or "attachment"
+        
+        # Convert to base64 for Graph API
+        content_base64 = base64.b64encode(file_content).decode('utf-8')
+        
+        # Upload directly to draft
+        attachments_data = [{
+            "name": filename,
+            "content": content_base64,
+            "content_type": content_type,
+            "size": len(file_content)
+        }]
+        
+        await graph_service.add_attachments_to_draft(draft_id, attachments_data)
+        
+        return {
+            "success": True,
+            "message": f"Attachment '{filename}' uploaded successfully to draft",
+            "filename": filename,
+            "size": len(file_content),
+            "content_type": content_type
+        }
+        
+    except ODataError as e:
+        logger.error(f"Graph API error uploading attachment: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Graph API error: {e.error.message if e.error else str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Error uploading attachment: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error uploading attachment: {str(e)}"
+        )
 
 
 @router.get("/user", response_model=UserResponse)
@@ -255,17 +308,28 @@ async def send_draft_email(
             body_type=email_request.body_type
         )
 
-        # Add attachments if provided
+        # Add attachments if provided (base64 content)
         if email_request.attachments:
-            attachments_data = [
-                {
+            attachments_data = []
+            for att in email_request.attachments:
+                if not att.content:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="content is required for attachments"
+                    )
+                if not att.name or not att.content_type:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="name and contentType are required for attachments"
+                    )
+                
+                attachments_data.append({
                     "name": att.name,
                     "content": att.content,
                     "content_type": att.content_type,
                     "size": att.size
-                }
-                for att in email_request.attachments
-            ]
+                })
+            
             await graph_service.add_attachments_to_draft(draft_id, attachments_data)
 
         # Send the draft
@@ -282,6 +346,8 @@ async def send_draft_email(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Graph API error: {e.error.message if e.error else str(e)}"
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Unexpected error sending draft: {e}")
         raise HTTPException(
@@ -309,17 +375,28 @@ async def send_email(
             body_type=email_request.body_type
         )
 
-        # Add attachments if provided
+        # Add attachments if provided (base64 content)
         if email_request.attachments:
-            attachments_data = [
-                {
+            attachments_data = []
+            for att in email_request.attachments:
+                if not att.content:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="content is required for attachments"
+                    )
+                if not att.name or not att.content_type:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="name and contentType are required for attachments"
+                    )
+                
+                attachments_data.append({
                     "name": att.name,
                     "content": att.content,
                     "content_type": att.content_type,
                     "size": att.size
-                }
-                for att in email_request.attachments
-            ]
+                })
+            
             await graph_service.add_attachments_to_draft(draft_id, attachments_data)
 
         # Then send it
@@ -336,6 +413,8 @@ async def send_email(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Graph API error: {e.error.message if e.error else str(e)}"
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Unexpected error sending email: {e}")
         raise HTTPException(
