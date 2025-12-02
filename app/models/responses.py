@@ -102,3 +102,16 @@ class EmailTrackingResponse(BaseModel):
     views: List[EmailView] = []
     total_views: int = 0
 
+
+class UploadProgressResponse(BaseModel):
+    """Response model for upload progress"""
+    upload_id: str
+    filename: str
+    status: str
+    bytes_read: int
+    total_size: int
+    progress_percent: float
+    error_message: Optional[str] = None
+    created_at: str
+    completed_at: Optional[str] = None
+

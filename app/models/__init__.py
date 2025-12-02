@@ -25,7 +25,7 @@ from .responses import (
     BrowserInfo,
     DeviceInfo,
     OSInfo,
-    LocationInfo,
+    LocationInfo, UploadProgressResponse,
 )
 from .errors import ErrorResponse
 
@@ -53,6 +53,7 @@ __all__ = [
     "DeviceInfo",
     "OSInfo",
     "LocationInfo",
+    "UploadProgressResponse",
     "ErrorResponse",
 ]
 

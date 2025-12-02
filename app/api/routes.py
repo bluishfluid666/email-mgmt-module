@@ -13,9 +13,14 @@ from app.models import (
     HealthResponse, TokenResponse, EmailMessage, EmailAddress,
     Recipient, ItemBody, FollowupFlag, Attachment,
     ConversationsResponse, Conversation, FilterConversationsRequest,
-    FilterNudgingConversationsRequest, EmailTrackingResponse
+    FilterNudgingConversationsRequest, EmailTrackingResponse,
+    UploadProgressResponse
 )
 from app.mongodb_service import mongodb_service
+from app.upload_progress_service import (
+    upload_progress_service,
+    UploadStatus
+)
 
 logger = logging.getLogger(__name__)
 
@@ -114,48 +119,133 @@ async def upload_attachment_to_draft(
         file: UploadFile = File(...),
         graph_service: GraphService = Depends(get_graph_service)
 ):
-    """Upload a file attachment directly to a draft message"""
+    """Upload a file attachment directly to a draft message with progress tracking"""
+    upload_id = None
     try:
-        # Read file content
-        file_content = await file.read()
-        
-        # Get content type
+        # Get file metadata
         content_type = file.content_type or "application/octet-stream"
         filename = file.filename or "attachment"
         
+        # Try to get file size from Content-Length header if available
+        file_size = 0
+        if hasattr(file, 'headers'):
+            content_length = file.headers.get('content-length')
+            if content_length:
+                try:
+                    file_size = int(content_length)
+                except (ValueError, TypeError):
+                    pass
+        
+        # Create progress tracker (will update with actual size after reading)
+        upload_id = upload_progress_service.create_progress(filename, file_size)
+        
+        # Update status: reading
+        upload_progress_service.update_progress(
+            upload_id,
+            status=UploadStatus.READING
+        )
+        
+        # Read file content in chunks for better progress tracking
+        file_content = b""
+        chunk_size = 8192  # 8KB chunks
+        bytes_read = 0
+        
+        while True:
+            chunk = await file.read(chunk_size)
+            if not chunk:
+                break
+            file_content += chunk
+            bytes_read += len(chunk)
+            
+            # Update progress during reading if we know the total size
+            if file_size > 0:
+                upload_progress_service.update_progress(
+                    upload_id,
+                    bytes_read=bytes_read
+                )
+        
+        actual_size = len(file_content)
+        
+        # Update total size if we didn't know it before
+        if file_size == 0:
+            upload_progress_service.update_progress(
+                upload_id,
+                total_size=actual_size
+            )
+        
+        # Update progress with final bytes read
+        upload_progress_service.update_progress(
+            upload_id,
+            bytes_read=actual_size,
+            status=UploadStatus.ENCODING
+        )
+        
         # Convert to base64 for Graph API
         content_base64 = base64.b64encode(file_content).decode('utf-8')
+        
+        # Update status: uploading
+        upload_progress_service.update_progress(
+            upload_id,
+            status=UploadStatus.UPLOADING
+        )
         
         # Upload directly to draft
         attachments_data = [{
             "name": filename,
             "content": content_base64,
             "content_type": content_type,
-            "size": len(file_content)
+            "size": actual_size
         }]
         
         await graph_service.add_attachments_to_draft(draft_id, attachments_data)
+        
+        # Update status: completed
+        upload_progress_service.update_progress(
+            upload_id,
+            status=UploadStatus.COMPLETED
+        )
         
         return {
             "success": True,
             "message": f"Attachment '{filename}' uploaded successfully to draft",
             "filename": filename,
-            "size": len(file_content),
-            "content_type": content_type
+            "size": actual_size,
+            "content_type": content_type,
+            "upload_id": upload_id
         }
         
     except ODataError as e:
+        error_msg = f"Graph API error: {e.error.message if e.error else str(e)}"
         logger.error(f"Graph API error uploading attachment: {e}")
+        if upload_id:
+            upload_progress_service.set_error(upload_id, error_msg)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Graph API error: {e.error.message if e.error else str(e)}"
+            detail=error_msg
         )
     except Exception as e:
+        error_msg = f"Error uploading attachment: {str(e)}"
         logger.error(f"Error uploading attachment: {e}")
+        if upload_id:
+            upload_progress_service.set_error(upload_id, error_msg)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error uploading attachment: {str(e)}"
+            detail=error_msg
         )
+
+
+@router.get("/uploads/{upload_id}/progress", response_model=UploadProgressResponse)
+async def get_upload_progress(upload_id: str):
+    """Get upload progress for a specific upload"""
+    progress = upload_progress_service.get_progress(upload_id)
+    
+    if not progress:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Upload progress with ID {upload_id} not found"
+        )
+    
+    return UploadProgressResponse(**progress)
 
 
 @router.get("/user", response_model=UserResponse)
