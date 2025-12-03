@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File
+from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Form, Query
 from msgraph.generated.models.o_data_errors.o_data_error import ODataError
 
 from app.config import settings
@@ -15,7 +15,7 @@ from app.models import (
     Recipient, ItemBody, FollowupFlag, Attachment,
     ConversationsResponse, Conversation, FilterConversationsRequest,
     FilterNudgingConversationsRequest, EmailTrackingResponse,
-    UploadProgressResponse
+    UploadProgressResponse, InitUploadRequest, ChunkUploadRequest
 )
 from app.mongodb_service import mongodb_service
 from app.upload_progress_service import (
@@ -125,33 +125,67 @@ async def _process_upload_async(
     """Process upload asynchronously: encode and upload to Graph API"""
     try:
         actual_size = len(file_content)
+        LARGE_FILE_THRESHOLD = 4 * 1024 * 1024  # 4MB - use upload session API for larger files
         
         # Update total size if we didn't know it before
         upload_progress_service.update_progress(
             upload_id,
-            bytes_read=actual_size,
-            total_size=actual_size,
-            status=UploadStatus.ENCODING
+            total_size=actual_size
         )
         
-        # Convert to base64 for Graph API (this can take time for large files)
-        content_base64 = base64.b64encode(file_content).decode('utf-8')
-        
-        # Update status: uploading
-        upload_progress_service.update_progress(
-            upload_id,
-            status=UploadStatus.UPLOADING
-        )
-        
-        # Upload directly to draft (this is the slow part)
-        attachments_data = [{
-            "name": filename,
-            "content": content_base64,
-            "content_type": content_type,
-            "size": actual_size
-        }]
-        
-        await graph_service.add_attachments_to_draft(draft_id, attachments_data)
+        # Use upload session API for large files (>4MB)
+        if actual_size > LARGE_FILE_THRESHOLD:
+            logger.info(f"Using upload session API for large file: {filename} ({actual_size} bytes)")
+            
+            # Reset bytes_read to 0 and set status to UPLOADING before starting chunked upload
+            upload_progress_service.update_progress(
+                upload_id,
+                bytes_read=0,
+                status=UploadStatus.UPLOADING
+            )
+            
+            # Progress callback for chunked uploads - updates progress after each chunk
+            def progress_callback(bytes_uploaded: int, total_size: int):
+                upload_progress_service.update_progress(
+                    upload_id,
+                    bytes_read=bytes_uploaded,
+                    status=UploadStatus.UPLOADING  # Keep status as UPLOADING during chunked upload
+                )
+            
+            # Upload using upload session API (chunked)
+            # Progress is updated after each chunk via the callback
+            await graph_service.upload_large_file_to_draft(
+                draft_id=draft_id,
+                file_content=file_content,
+                filename=filename,
+                content_type=content_type,
+                progress_callback=progress_callback
+            )
+        else:
+            # Use regular attachment API for small files
+            upload_progress_service.update_progress(
+                upload_id,
+                status=UploadStatus.ENCODING
+            )
+            
+            # Convert to base64 for Graph API
+            content_base64 = base64.b64encode(file_content).decode('utf-8')
+            
+            # Update status: uploading
+            upload_progress_service.update_progress(
+                upload_id,
+                status=UploadStatus.UPLOADING
+            )
+            
+            # Upload directly to draft
+            attachments_data = [{
+                "name": filename,
+                "content": content_base64,
+                "content_type": content_type,
+                "size": actual_size
+            }]
+            
+            await graph_service.add_attachments_to_draft(draft_id, attachments_data)
         
         # Update status: completed
         upload_progress_service.update_progress(
@@ -174,12 +208,74 @@ async def _process_upload_async(
 @router.post("/drafts/{draft_id}/attachments")
 async def upload_attachment_to_draft(
         draft_id: str,
-        file: UploadFile = File(...),
+        file: Optional[UploadFile] = File(None),
+        init_only: Optional[bool] = Form(default=False, alias="initOnly"),
+        filename: Optional[str] = Form(None),
+        size: Optional[int] = Form(None),
+        content_type: Optional[str] = Form(None, alias="contentType"),
         graph_service: GraphService = Depends(get_graph_service)
 ):
-    """Upload a file attachment directly to a draft message with progress tracking"""
+    """
+    Upload a file attachment directly to a draft message with progress tracking.
+    
+    Supports two modes:
+    1. init_only=true: Initialize upload session for chunked uploads (returns upload_id)
+       - Requires: filename, size, contentType as form fields
+    2. Regular upload: Upload entire file (for files <= 4MB)
+       - Requires: file as multipart form data
+    
+    Note: Vercel has a 4.5MB request body limit for serverless functions.
+    Files larger than 4MB should use Microsoft Graph's upload session API
+    or be uploaded directly to external storage.
+    """
     upload_id = None
     try:
+        # Check if this is an initialization request (init_only mode)
+        if init_only:
+            if not filename or size is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="filename and size are required when initOnly=true"
+                )
+            
+            # Initialize upload session for chunked uploads
+            upload_id = upload_progress_service.create_progress(
+                filename=filename,
+                total_size=size,
+                draft_id=draft_id
+            )
+            
+            upload_progress_service.update_progress(
+                upload_id,
+                status=UploadStatus.UPLOADING
+            )
+            
+            # Create Microsoft Graph upload session
+            upload_url = await graph_service.create_upload_session(
+                draft_id=draft_id,
+                filename=filename,
+                file_size=size,
+                content_type=content_type or "application/octet-stream"
+            )
+            
+            # Store upload URL for chunk uploads
+            upload_progress_service.set_upload_url(upload_id, upload_url)
+            
+            return {
+                "success": True,
+                "message": f"Upload session initialized for '{filename}'",
+                "filename": filename,
+                "size": size,
+                "content_type": content_type or "application/octet-stream",
+                "upload_id": upload_id
+            }
+        
+        # Regular file upload (for files <= 4MB)
+        if not file:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File is required for regular upload, or use initOnly=true for chunked uploads"
+            )
         # Get file metadata
         content_type = file.content_type or "application/octet-stream"
         filename = file.filename or "attachment"
@@ -194,8 +290,12 @@ async def upload_attachment_to_draft(
                 except (ValueError, TypeError):
                     pass
         
-        # Create progress tracker first
-        upload_id = upload_progress_service.create_progress(filename, file_size)
+        # Note: Vercel has a 4.5MB limit, but we'll handle files up to that limit
+        # Files larger than 4MB will use Microsoft Graph's upload session API
+        # which uploads chunks directly to Graph, bypassing Vercel's limit
+        
+        # Create progress tracker first (track by draft_id)
+        upload_id = upload_progress_service.create_progress(filename, file_size, draft_id=draft_id)
         
         # Update status: reading
         upload_progress_service.update_progress(
@@ -223,6 +323,9 @@ async def upload_attachment_to_draft(
                 )
         
         actual_size = len(file_content)
+        
+        # Note: Files larger than 4MB will automatically use upload session API
+        # which uploads in chunks directly to Microsoft Graph, bypassing Vercel's 4.5MB limit
         
         # Update total size if we didn't know it before
         if file_size == 0:
@@ -257,6 +360,87 @@ async def upload_attachment_to_draft(
         logger.error(f"Error starting upload: {e}")
         if upload_id:
             upload_progress_service.set_error(upload_id, error_msg)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=error_msg
+        )
+
+
+@router.post("/drafts/{draft_id}/attachments/{upload_id}/chunk")
+async def upload_chunk_to_draft(
+        draft_id: str,
+        upload_id: str,
+        chunk_data: UploadFile = File(...),
+        chunk_index: int = Form(...),
+        start_byte: int = Form(...),
+        end_byte: int = Form(...),
+        total_size: int = Form(...),
+        is_final: bool = Form(default=False),
+        graph_service: GraphService = Depends(get_graph_service)
+):
+    """Upload a chunk of data to an existing upload session"""
+    try:
+        # Get upload session URL
+        upload_url = upload_progress_service.get_upload_url(upload_id)
+        if not upload_url:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Upload session {upload_id} not found or expired"
+            )
+        
+        # Read chunk data
+        chunk_bytes = await chunk_data.read()
+        chunk_size = len(chunk_bytes)
+        
+        # Validate chunk metadata
+        expected_chunk_size = end_byte - start_byte + 1
+        if chunk_size != expected_chunk_size:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Chunk size mismatch: expected {expected_chunk_size} bytes, got {chunk_size} bytes"
+            )
+        
+        # Upload chunk to Microsoft Graph
+        await graph_service.upload_chunk(
+            upload_url=upload_url,
+            chunk_data=chunk_bytes,
+            range_start=start_byte,
+            range_end=end_byte,
+            total_size=total_size
+        )
+        
+        # Update progress
+        bytes_uploaded = end_byte + 1
+        upload_progress_service.update_progress(
+            upload_id,
+            bytes_read=bytes_uploaded,
+            status=UploadStatus.UPLOADING
+        )
+        
+        # If this is the final chunk OR all bytes are uploaded, mark as completed
+        progress = upload_progress_service.get_progress(upload_id)
+        if is_final or (progress and bytes_uploaded >= total_size):
+            upload_progress_service.update_progress(
+                upload_id,
+                bytes_read=total_size,  # Ensure bytes_read equals total_size
+                status=UploadStatus.COMPLETED
+            )
+            logger.info(f"Final chunk uploaded for {upload_id}. Upload completed. ({bytes_uploaded}/{total_size} bytes)")
+        
+        return {
+            "success": True,
+            "message": f"Chunk {chunk_index} uploaded successfully",
+            "bytes_uploaded": bytes_uploaded,
+            "total_size": total_size,
+            "is_final": is_final
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = f"Error uploading chunk: {str(e)}"
+        logger.error(f"Error uploading chunk for {upload_id}: {e}")
+        upload_progress_service.set_error(upload_id, error_msg)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=error_msg
@@ -426,6 +610,19 @@ async def send_draft_email(
             recipient=str(email_request.recipient),
             body_type=email_request.body_type
         )
+
+        # Wait for any pending file uploads to complete before sending
+        # This ensures attachments uploaded via upload session API are attached before sending
+        logger.info(f"Checking for pending uploads for draft {draft_id}")
+        uploads_completed = await upload_progress_service.wait_for_uploads(draft_id, timeout=300)
+        
+        if not uploads_completed:
+            pending = upload_progress_service.get_pending_uploads_for_draft(draft_id)
+            if pending:
+                raise HTTPException(
+                    status_code=status.HTTP_408_REQUEST_TIMEOUT,
+                    detail=f"File uploads are still in progress. Please wait for uploads to complete before sending."
+                )
 
         # Add attachments if provided (base64 content)
         if email_request.attachments:

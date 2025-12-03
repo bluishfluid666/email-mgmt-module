@@ -30,6 +30,8 @@ class UploadProgress:
         self.error_message: Optional[str] = None
         self.created_at = datetime.now()
         self.completed_at: Optional[datetime] = None
+        self.upload_url: Optional[str] = None  # Microsoft Graph upload session URL
+        self.draft_id: Optional[str] = None  # Draft ID for this upload
     
     def to_dict(self) -> Dict:
         """Convert progress to dictionary"""
@@ -107,7 +109,9 @@ class UploadProgressService:
             Upload ID for tracking progress
         """
         upload_id = str(uuid.uuid4())
-        self.progress[upload_id] = UploadProgress(upload_id, filename, total_size)
+        progress = UploadProgress(upload_id, filename, total_size)
+        progress.draft_id = draft_id
+        self.progress[upload_id] = progress
         
         # Track upload by draft_id if provided
         if draft_id:
@@ -117,6 +121,32 @@ class UploadProgressService:
         
         logger.info(f"Created progress tracker: {upload_id} for {filename} ({total_size} bytes)")
         return upload_id
+    
+    def set_upload_url(self, upload_id: str, upload_url: str):
+        """
+        Store the Microsoft Graph upload session URL for an upload
+        
+        Args:
+            upload_id: Upload ID
+            upload_url: Microsoft Graph upload session URL
+        """
+        if upload_id in self.progress:
+            self.progress[upload_id].upload_url = upload_url
+            logger.debug(f"Set upload URL for {upload_id}")
+    
+    def get_upload_url(self, upload_id: str) -> Optional[str]:
+        """
+        Get the Microsoft Graph upload session URL for an upload
+        
+        Args:
+            upload_id: Upload ID
+            
+        Returns:
+            Upload URL or None if not found
+        """
+        if upload_id in self.progress:
+            return self.progress[upload_id].upload_url
+        return None
     
     def get_pending_uploads_for_draft(self, draft_id: str) -> List[str]:
         """
@@ -153,20 +183,35 @@ class UploadProgressService:
         """
         import time
         start_time = time.time()
+        check_count = 0
         
         while time.time() - start_time < timeout:
             pending = self.get_pending_uploads_for_draft(draft_id)
             if not pending:
+                logger.info(f"All uploads completed for draft {draft_id}")
                 return True
             
             # Check if any failed
             for upload_id in pending:
                 if upload_id in self.progress:
-                    if self.progress[upload_id].status == UploadStatus.FAILED:
+                    progress = self.progress[upload_id]
+                    if progress.status == UploadStatus.FAILED:
+                        logger.warning(f"Upload {upload_id} failed for draft {draft_id}")
                         return False
+                    # Auto-complete if bytes_read equals total_size (even if status isn't COMPLETED)
+                    if progress.bytes_read >= progress.total_size and progress.total_size > 0:
+                        logger.info(f"Auto-completing upload {upload_id} - all bytes uploaded ({progress.bytes_read}/{progress.total_size})")
+                        self.update_progress(upload_id, status=UploadStatus.COMPLETED)
+            
+            check_count += 1
+            if check_count % 10 == 0:  # Log every 5 seconds (10 * 0.5s)
+                logger.info(f"Still waiting for {len(pending)} upload(s) for draft {draft_id}...")
             
             await asyncio.sleep(0.5)  # Check every 500ms
         
+        # Timeout reached
+        pending = self.get_pending_uploads_for_draft(draft_id)
+        logger.warning(f"Timeout waiting for uploads for draft {draft_id}. Pending: {len(pending)}")
         return False
     
     def update_progress(

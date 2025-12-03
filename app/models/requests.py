@@ -13,6 +13,27 @@ class AttachmentRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class InitUploadRequest(BaseModel):
+    """Request model for initializing chunked upload session"""
+    filename: str
+    size: int  # Total file size in bytes
+    content_type: str = Field(default="application/octet-stream", alias="contentType")
+    init_only: bool = Field(default=False, alias="initOnly")  # If true, only initialize session
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class ChunkUploadRequest(BaseModel):
+    """Request model for uploading a chunk"""
+    chunk_index: int = Field(alias="chunkIndex")
+    start_byte: int = Field(alias="startByte")
+    end_byte: int = Field(alias="endByte")
+    total_size: int = Field(alias="totalSize")
+    is_final: bool = Field(default=False, alias="isFinal")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class SendEmailRequest(BaseModel):
     """Request model for sending emails"""
 

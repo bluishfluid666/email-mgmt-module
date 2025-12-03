@@ -402,6 +402,7 @@ class GraphService:
             # Upload file in chunks
             bytes_uploaded = 0
             chunk_number = 0
+            total_chunks = (file_size + chunk_size - 1) // chunk_size  # Ceiling division
 
             while bytes_uploaded < file_size:
                 # Calculate chunk boundaries
@@ -421,11 +422,11 @@ class GraphService:
                 bytes_uploaded = range_end + 1
                 chunk_number += 1
 
-                # Call progress callback if provided
+                # Call progress callback if provided (update after each chunk)
                 if progress_callback:
                     progress_callback(bytes_uploaded, file_size)
 
-                logger.info(f"Uploaded chunk {chunk_number}: {bytes_uploaded}/{file_size} bytes")
+                logger.info(f"Uploaded chunk {chunk_number}/{total_chunks}: {bytes_uploaded}/{file_size} bytes ({bytes_uploaded * 100 // file_size}%)")
 
             logger.info(f"Successfully uploaded large file {filename} ({file_size} bytes) in {chunk_number} chunks")
             return True
