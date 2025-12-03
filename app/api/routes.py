@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import logging
 from datetime import datetime, timedelta, timezone
@@ -113,6 +114,63 @@ async def health_check():
     )
 
 
+async def _process_upload_async(
+    upload_id: str,
+    draft_id: str,
+    file_content: bytes,
+    filename: str,
+    content_type: str,
+    graph_service: GraphService
+):
+    """Process upload asynchronously: encode and upload to Graph API"""
+    try:
+        actual_size = len(file_content)
+        
+        # Update total size if we didn't know it before
+        upload_progress_service.update_progress(
+            upload_id,
+            bytes_read=actual_size,
+            total_size=actual_size,
+            status=UploadStatus.ENCODING
+        )
+        
+        # Convert to base64 for Graph API (this can take time for large files)
+        content_base64 = base64.b64encode(file_content).decode('utf-8')
+        
+        # Update status: uploading
+        upload_progress_service.update_progress(
+            upload_id,
+            status=UploadStatus.UPLOADING
+        )
+        
+        # Upload directly to draft (this is the slow part)
+        attachments_data = [{
+            "name": filename,
+            "content": content_base64,
+            "content_type": content_type,
+            "size": actual_size
+        }]
+        
+        await graph_service.add_attachments_to_draft(draft_id, attachments_data)
+        
+        # Update status: completed
+        upload_progress_service.update_progress(
+            upload_id,
+            status=UploadStatus.COMPLETED
+        )
+        
+        logger.info(f"Upload {upload_id} completed successfully")
+        
+    except ODataError as e:
+        error_msg = f"Graph API error: {e.error.message if e.error else str(e)}"
+        logger.error(f"Graph API error uploading attachment {upload_id}: {e}")
+        upload_progress_service.set_error(upload_id, error_msg)
+    except Exception as e:
+        error_msg = f"Error uploading attachment: {str(e)}"
+        logger.error(f"Error uploading attachment {upload_id}: {e}")
+        upload_progress_service.set_error(upload_id, error_msg)
+
+
 @router.post("/drafts/{draft_id}/attachments")
 async def upload_attachment_to_draft(
         draft_id: str,
@@ -136,7 +194,7 @@ async def upload_attachment_to_draft(
                 except (ValueError, TypeError):
                     pass
         
-        # Create progress tracker (will update with actual size after reading)
+        # Create progress tracker first
         upload_id = upload_progress_service.create_progress(filename, file_size)
         
         # Update status: reading
@@ -173,59 +231,30 @@ async def upload_attachment_to_draft(
                 total_size=actual_size
             )
         
-        # Update progress with final bytes read
-        upload_progress_service.update_progress(
-            upload_id,
-            bytes_read=actual_size,
-            status=UploadStatus.ENCODING
-        )
+        # Return upload_id immediately and process asynchronously
+        # Start background task to process upload (encode + upload to Graph API)
+        asyncio.create_task(_process_upload_async(
+            upload_id=upload_id,
+            draft_id=draft_id,
+            file_content=file_content,
+            filename=filename,
+            content_type=content_type,
+            graph_service=graph_service
+        ))
         
-        # Convert to base64 for Graph API
-        content_base64 = base64.b64encode(file_content).decode('utf-8')
-        
-        # Update status: uploading
-        upload_progress_service.update_progress(
-            upload_id,
-            status=UploadStatus.UPLOADING
-        )
-        
-        # Upload directly to draft
-        attachments_data = [{
-            "name": filename,
-            "content": content_base64,
-            "content_type": content_type,
-            "size": actual_size
-        }]
-        
-        await graph_service.add_attachments_to_draft(draft_id, attachments_data)
-        
-        # Update status: completed
-        upload_progress_service.update_progress(
-            upload_id,
-            status=UploadStatus.COMPLETED
-        )
-        
+        # Return immediately with upload_id so client can start polling
         return {
             "success": True,
-            "message": f"Attachment '{filename}' uploaded successfully to draft",
+            "message": f"Upload started for '{filename}'",
             "filename": filename,
             "size": actual_size,
             "content_type": content_type,
             "upload_id": upload_id
         }
         
-    except ODataError as e:
-        error_msg = f"Graph API error: {e.error.message if e.error else str(e)}"
-        logger.error(f"Graph API error uploading attachment: {e}")
-        if upload_id:
-            upload_progress_service.set_error(upload_id, error_msg)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error_msg
-        )
     except Exception as e:
-        error_msg = f"Error uploading attachment: {str(e)}"
-        logger.error(f"Error uploading attachment: {e}")
+        error_msg = f"Error starting upload: {str(e)}"
+        logger.error(f"Error starting upload: {e}")
         if upload_id:
             upload_progress_service.set_error(upload_id, error_msg)
         raise HTTPException(
