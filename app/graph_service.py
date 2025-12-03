@@ -1,7 +1,8 @@
 import asyncio
 import base64
 import logging
-from typing import Optional, List, Dict
+import httpx
+from typing import Optional, List, Dict, Callable
 
 from azure.identity import ClientSecretCredential
 from kiota_abstractions.base_request_configuration import RequestConfiguration
@@ -233,6 +234,205 @@ class GraphService:
             logger.error(f"Error updating draft: {e}")
 
         raise
+
+    async def create_upload_session(
+        self,
+        draft_id: str,
+        filename: str,
+        file_size: int,
+        content_type: str = "application/octet-stream"
+    ) -> str:
+        """
+        Create an upload session for a large file attachment
+
+        Args:
+            draft_id: The immutable ID of the draft message
+            filename: Name of the file
+            file_size: Size of the file in bytes
+            content_type: MIME type of the file
+
+        Returns:
+            Upload URL for chunked uploads
+        """
+        try:
+            # Get access token
+            token = self.client_credential.get_token("https://graph.microsoft.com/.default").token
+            
+            # Create upload session request body
+            request_body = {
+                "AttachmentItem": {
+                    "attachmentType": "file",
+                    "name": filename,
+                    "size": file_size,
+                    "contentType": content_type
+                }
+            }
+            
+            # Make direct HTTP request to create upload session
+            url = f"https://graph.microsoft.com/v1.0/users/sales@powertrans.vn/messages/{draft_id}/attachments/createUploadSession"
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    url,
+                    json=request_body,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                        "Prefer": "IdType=\"ImmutableId\""
+                    },
+                    timeout=30.0
+                )
+                
+                # Accept both 200 OK and 201 Created as success
+                if response.status_code not in [200, 201]:
+                    error_msg = f"Failed to create upload session: {response.status_code} - {response.text}"
+                    logger.error(error_msg)
+                    raise Exception(error_msg)
+                
+                result = response.json()
+                upload_url = result.get("uploadUrl")
+                
+                if not upload_url:
+                    raise Exception("Failed to create upload session: no upload URL in response")
+                
+                logger.info(f"Created upload session for {filename} ({file_size} bytes)")
+                return upload_url
+
+        except Exception as e:
+            logger.error(f"Error creating upload session: {e}")
+            raise
+
+    async def upload_chunk(
+        self,
+        upload_url: str,
+        chunk_data: bytes,
+        range_start: int,
+        range_end: int,
+        total_size: int
+    ) -> bool:
+        """
+        Upload a chunk of data to the upload session
+
+        Args:
+            upload_url: The upload URL from the upload session (includes authtoken)
+            chunk_data: The chunk of data to upload
+            range_start: Start byte position (0-based)
+            range_end: End byte position (inclusive)
+            total_size: Total size of the file
+
+        Returns:
+            True if successful
+        """
+        try:
+            # Content-Range header format: bytes start-end/total
+            content_range = f"bytes {range_start}-{range_end}/{total_size}"
+
+            # Note: The upload_url already contains an authtoken query parameter
+            # We should NOT send an Authorization header - the authtoken in the URL is sufficient
+            async with httpx.AsyncClient() as client:
+                response = await client.put(
+                    upload_url,
+                    content=chunk_data,
+                    headers={
+                        "Content-Length": str(len(chunk_data)),
+                        "Content-Range": content_range
+                    },
+                    timeout=60.0
+                )
+
+                if response.status_code not in [200, 201, 202]:
+                    error_msg = f"Upload chunk failed: {response.status_code} - {response.text}"
+                    logger.error(error_msg)
+                    raise Exception(error_msg)
+
+                # When uploading the final chunk, Microsoft Graph returns 201 Created
+                # with the attachment information, confirming the attachment was created
+                is_final_chunk = range_end >= total_size - 1
+                if is_final_chunk and response.status_code == 201:
+                    logger.info(f"Final chunk uploaded successfully. Attachment committed to message.")
+                    # Optionally parse response to verify attachment was created
+                    try:
+                        result = response.json()
+                        if result.get("id"):
+                            logger.info(f"Attachment ID: {result.get('id')}")
+                    except:
+                        pass  # Response might not be JSON
+
+                logger.debug(f"Uploaded chunk {range_start}-{range_end}/{total_size}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Error uploading chunk: {e}")
+            raise
+
+    async def upload_large_file_to_draft(
+        self,
+        draft_id: str,
+        file_content: bytes,
+        filename: str,
+        content_type: str = "application/octet-stream",
+        chunk_size: int = 3 * 1024 * 1024,  # 3MB chunks (safe for Vercel)
+        progress_callback: Optional[Callable[[int, int], None]] = None
+    ) -> bool:
+        """
+        Upload a large file to a draft using upload session API with chunked uploads
+
+        Args:
+            draft_id: The immutable ID of the draft message
+            file_content: The file content as bytes
+            filename: Name of the file
+            content_type: MIME type of the file
+            chunk_size: Size of each chunk in bytes (default 3MB)
+            progress_callback: Optional callback function(bytes_uploaded, total_size)
+
+        Returns:
+            True if successful
+        """
+        try:
+            file_size = len(file_content)
+
+            # Create upload session
+            upload_url = await self.create_upload_session(
+                draft_id=draft_id,
+                filename=filename,
+                file_size=file_size,
+                content_type=content_type
+            )
+
+            # Upload file in chunks
+            bytes_uploaded = 0
+            chunk_number = 0
+
+            while bytes_uploaded < file_size:
+                # Calculate chunk boundaries
+                range_start = bytes_uploaded
+                range_end = min(bytes_uploaded + chunk_size - 1, file_size - 1)
+                chunk_data = file_content[range_start:range_end + 1]
+
+                # Upload chunk
+                await self.upload_chunk(
+                    upload_url=upload_url,
+                    chunk_data=chunk_data,
+                    range_start=range_start,
+                    range_end=range_end,
+                    total_size=file_size
+                )
+
+                bytes_uploaded = range_end + 1
+                chunk_number += 1
+
+                # Call progress callback if provided
+                if progress_callback:
+                    progress_callback(bytes_uploaded, file_size)
+
+                logger.info(f"Uploaded chunk {chunk_number}: {bytes_uploaded}/{file_size} bytes")
+
+            logger.info(f"Successfully uploaded large file {filename} ({file_size} bytes) in {chunk_number} chunks")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error uploading large file: {e}")
+            raise
 
     async def add_attachments_to_draft(self, draft_id: str, attachments: List[Dict[str, str]]) -> bool:
         """

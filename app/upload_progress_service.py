@@ -2,7 +2,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -61,6 +61,7 @@ class UploadProgressService:
             cleanup_interval_seconds: Interval in seconds to clean up old progress records
         """
         self.progress: Dict[str, UploadProgress] = {}
+        self.draft_uploads: Dict[str, List[str]] = {}  # Map draft_id to list of upload_ids
         self.cleanup_interval = cleanup_interval_seconds
         self._cleanup_task: Optional[asyncio.Task] = None
         self._start_cleanup_task()
@@ -93,21 +94,80 @@ class UploadProgressService:
         if upload_ids_to_remove:
             logger.info(f"Cleaned up {len(upload_ids_to_remove)} old progress record(s)")
     
-    def create_progress(self, filename: str, total_size: int) -> str:
+    def create_progress(self, filename: str, total_size: int, draft_id: Optional[str] = None) -> str:
         """
         Create a new progress tracker
         
         Args:
             filename: Name of the file being uploaded
             total_size: Total size of the file in bytes
+            draft_id: Optional draft ID to track uploads per draft
             
         Returns:
             Upload ID for tracking progress
         """
         upload_id = str(uuid.uuid4())
         self.progress[upload_id] = UploadProgress(upload_id, filename, total_size)
+        
+        # Track upload by draft_id if provided
+        if draft_id:
+            if draft_id not in self.draft_uploads:
+                self.draft_uploads[draft_id] = []
+            self.draft_uploads[draft_id].append(upload_id)
+        
         logger.info(f"Created progress tracker: {upload_id} for {filename} ({total_size} bytes)")
         return upload_id
+    
+    def get_pending_uploads_for_draft(self, draft_id: str) -> List[str]:
+        """
+        Get list of pending upload IDs for a draft
+        
+        Args:
+            draft_id: Draft ID
+            
+        Returns:
+            List of upload IDs that are not yet completed
+        """
+        if draft_id not in self.draft_uploads:
+            return []
+        
+        pending = []
+        for upload_id in self.draft_uploads.get(draft_id, []):
+            if upload_id in self.progress:
+                progress = self.progress[upload_id]
+                if progress.status not in [UploadStatus.COMPLETED, UploadStatus.FAILED]:
+                    pending.append(upload_id)
+        
+        return pending
+    
+    async def wait_for_uploads(self, draft_id: str, timeout: int = 300) -> bool:
+        """
+        Wait for all pending uploads for a draft to complete
+        
+        Args:
+            draft_id: Draft ID
+            timeout: Maximum time to wait in seconds
+            
+        Returns:
+            True if all uploads completed, False if timeout
+        """
+        import time
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            pending = self.get_pending_uploads_for_draft(draft_id)
+            if not pending:
+                return True
+            
+            # Check if any failed
+            for upload_id in pending:
+                if upload_id in self.progress:
+                    if self.progress[upload_id].status == UploadStatus.FAILED:
+                        return False
+            
+            await asyncio.sleep(0.5)  # Check every 500ms
+        
+        return False
     
     def update_progress(
         self,
